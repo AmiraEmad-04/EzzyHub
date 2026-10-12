@@ -1,0 +1,228 @@
+version: "3.9"
+
+# ============================================================
+# EzzyHub — Docker Compose (development + staging)
+# ============================================================
+# Start everything:  docker-compose up -d
+# Stop:              docker-compose down
+# Logs:              docker-compose logs -f
+#
+# Ports exposed to host:
+#   8085  API Gateway     (use THIS for the frontend)
+#   8081  Req Analyzer    (internal — accessed via gateway)
+#   8082  Code Analyzer   (internal — accessed via gateway)
+#   8000  Python NLP      (internal — accessed via gateway)
+#   3306  MySQL           (dev only — NOT exposed in production)
+#   8080  phpMyAdmin      (dev only — remove in production)
+# ============================================================
+
+services:
+
+  # ── MySQL ──────────────────────────────────────────────────
+  mysql:
+    image: mysql:8.3
+    container_name: ezzyhub-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:basmala.12347890}
+      MYSQL_DATABASE:      ezzyhub_db
+      MYSQL_USER:          root
+      MYSQL_PASSWORD:      ${DB_PASSWORD:basmala.12347890}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "3306:3306"           # Remove in production
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD:-ezzyhub_dev_password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ── phpMyAdmin (dev only) ───────────────────────────────────
+  phpmyadmin:
+    image: phpmyadmin:5.2
+    container_name: ezzyhub-pma
+    restart: unless-stopped
+    environment:
+      PMA_HOST: mysql
+      PMA_USER: root
+      PMA_PASSWORD: ${DB_ROOT_PASSWORD:basmala.12347890}
+    ports:
+      - "8080:80"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    profiles:
+      - dev                   # Only starts with: docker-compose --profile dev up
+
+  # ── Python NLP Microservice ─────────────────────────────────
+  python-nlp:
+    build:
+      context: ./python-microservice
+      dockerfile: Dockerfile
+    container_name: ezzyhub-python-nlp
+    restart: unless-stopped
+    environment:
+      DEV_MODE:         ${DEV_MODE:-true}
+      HF_TOKEN:         ${HF_TOKEN:-}
+      NLP_SERVICE_KEY:  ${NLP_SERVICE_KEY:-}
+      EMBED_CACHE_DIR:  /app/cache
+      ALLOWED_ORIGINS:  "http://localhost:8085,${FRONTEND_URL:-}"
+    volumes:
+      # HF model cache — persists across container restarts
+      # Models download on first run (~500 MB total)
+      - hf_cache:/root/.cache/huggingface
+      - embed_cache:/app/cache
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s     # Models take time to load on first run
+
+  # ── Code Analyzer ───────────────────────────────────────────
+  code-analyzer:
+    build:
+      context: ./Code-Analyzer/backend
+      dockerfile: Dockerfile
+    container_name: ezzyhub-code-analyzer
+    restart: unless-stopped
+    environment:
+      SERVER_PORT:        8082
+      LLM_PROVIDER:       ${LLM_PROVIDER:-anthropic}
+      ANTHROPIC_API_KEY:  ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY:     ${OPENAI_API_KEY:-}
+      GROQ_API_KEY:       ${GROQ_API_KEY:-}
+      HF_TOKEN:           ${HF_TOKEN:-}
+      GATEWAY_SECRET:     ${GATEWAY_SECRET:-}
+    ports:
+      - "8082:8082"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/api/v1/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+
+  # ── Requirement Analyzer ─────────────────────────────────────
+  requirement-analyzer:
+    build:
+      context: ./Requirement-Analyzer
+      dockerfile: Dockerfile
+    container_name: ezzyhub-req-analyzer
+    restart: unless-stopped
+    environment:
+      SERVER_PORT:            8081
+      DB_URL:                 jdbc:mysql://mysql:3306/ezzyhub_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      DB_USER:                ezzyhub
+      DB_PASS:                ${DB_PASSWORD:-ezzyhub_dev_password}
+      GROQ_API_KEY:           ${GROQ_API_KEY:-}
+      HF_TOKEN:               ${HF_TOKEN:-}
+      USE_HF_VALIDATOR:       ${USE_HF_VALIDATOR:-false}
+      PYTHON_NLP_URL:         http://python-nlp:8000
+      CODE_ANALYZER_URL:      http://code-analyzer:8082
+      GATEWAY_SECRET:         ${GATEWAY_SECRET:-}
+      NLP_SERVICE_KEY:        ${NLP_SERVICE_KEY:-}
+      SECURITY_ENABLED:       ${SECURITY_ENABLED:-false}
+    ports:
+      - "8081:8081"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      python-nlp:
+        condition: service_healthy
+      code-analyzer:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/api/v1/requirements/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+
+  # ── API Gateway ──────────────────────────────────────────────
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: ezzyhub-gateway
+    restart: unless-stopped
+    environment:
+      SERVER_PORT:                        8085
+      SERVICES_CODE_ANALYZER_URL:         http://code-analyzer:8082
+      SERVICES_REQUIREMENT_ANALYZER_URL:  http://requirement-analyzer:8081
+      SERVICES_PYTHON_NLP_URL:           http://python-nlp:8000
+    ports:
+      - "8085:8085"
+    depends_on:
+      code-analyzer:
+        condition: service_healthy
+      requirement-analyzer:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8085/api/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+
+volumes:
+  mysql_data:
+  hf_cache:       # Hugging Face model cache — persists between deploys
+  embed_cache:    # Disk embedding cache — speeds up repeated matching runs
+
+  # ── Sonar Analyzer (Node.js proxy) ─────────────────────────
+  sonar-node-proxy:
+    build:
+      context: ./Sonar-Analyzer/backend
+      dockerfile: ../Dockerfile
+    container_name: ezzyhub-sonar-proxy
+    restart: unless-stopped
+    environment:
+      PORT:        8083
+      SONAR_URL:   http://sonarqube:9000
+      SONAR_USER:  admin
+      SONAR_PASS:  ${SONAR_PASS:-admin}
+    ports:
+      - "8083:8083"
+    depends_on:
+      - sonarqube
+
+  # ── SonarQube ───────────────────────────────────────────────
+  sonarqube:
+    image: sonarqube:community
+    container_name: ezzyhub-sonarqube
+    restart: unless-stopped
+    environment:
+      SONAR_JDBC_URL:      jdbc:postgresql://sonar-db:5432/sonar
+      SONAR_JDBC_USERNAME: sonar
+      SONAR_JDBC_PASSWORD: ${SONAR_DB_PASS:-sonar}
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_logs:/opt/sonarqube/logs
+      - sonarqube_extensions:/opt/sonarqube/extensions
+    ports:
+      - "9000:9000"
+    depends_on:
+      - sonar-db
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  # ── PostgreSQL for SonarQube ────────────────────────────────
+  sonar-db:
+    image: postgres:15
+    container_name: ezzyhub-sonar-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     sonar
+      POSTGRES_PASSWORD: ${SONAR_DB_PASS:-sonar}
+      POSTGRES_DB:       sonar
+    volumes:
+      - sonar_postgres_data:/var/lib/postgresql/data
+
+  sonarqube_data:
+  sonarqube_logs:
+  sonarqube_extensions:
+  sonar_postgres_data:

@@ -1,0 +1,1555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>EzzyHub — AI Code Verification Platform</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{  --bg:#0d0d0d;--fg:#e8e8e8;--card:#161616;--secondary:#222;
+  --muted:#1e1e1e;--muted-fg:#6b7280;--primary:#fbbf24;--primary-fg:#0d0d0d;
+  --accent:#f59e0b;--destructive:#ef4444;--success:#10b981;--warning:#f59e0b;
+  --info:#3b82f6;--border:rgba(251,191,36,.12);--input-bg:#141414;
+  --sidebar:#0a0a0a;--r:8px;--font:'Inter',system-ui,sans-serif;
+  --mono:'JetBrains Mono',monospace;
+}
+body{font-family:var(--font);background:var(--bg);color:var(--fg);min-height:100vh;font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.shell{display:flex;height:100vh;overflow:hidden}
+
+/* ── Sidebar ─────────────────────────────────────── */
+.sidebar{width:248px;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
+.logo-area{padding:20px 20px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+.logo-icon{width:34px;height:34px;background:var(--primary);border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#000;flex-shrink:0}
+.logo-name{font-size:17px;font-weight:600}
+.logo-badge{font-size:10px;color:var(--muted-fg);margin-top:1px}
+nav{flex:1;padding:12px;display:flex;flex-direction:column;gap:1px}
+.nsec{font-size:10px;color:var(--muted-fg);padding:10px 10px 4px;letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+.ni{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:6px;cursor:pointer;color:var(--muted-fg);font-size:13px;font-weight:500;border:none;background:none;width:100%;text-align:left;transition:all .15s}
+.ni svg{width:16px;height:16px;flex-shrink:0;stroke:currentColor;fill:none;stroke-width:2}
+.ni:hover{background:var(--muted);color:var(--fg)}
+.ni.active{background:rgba(251,191,36,.1);color:var(--primary)}
+.ni.active svg{stroke:var(--primary)}
+.svc-panel{padding:10px 12px 8px;border-top:1px solid var(--border)}
+.svc-title{font-size:10px;color:var(--muted-fg);letter-spacing:.06em;text-transform:uppercase;font-weight:600;padding:4px 0 6px}
+.svc-row{display:flex;align-items:center;justify-content:space-between;padding:3px 0;font-size:12px;color:var(--muted-fg)}
+.dot{width:7px;height:7px;border-radius:50%;background:#333;display:inline-block;flex-shrink:0;transition:background .3s}
+.dot.up{background:var(--success)}.dot.down{background:var(--destructive)}.dot.check{background:var(--warning);animation:blink 1.2s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+.sidebar-foot{padding:10px 12px 14px;border-top:1px solid var(--border)}
+
+/* ── Main ────────────────────────────────────────── */
+.main{flex:1;overflow-y:auto;background:var(--bg)}
+.pw{padding:28px 32px;display:none}
+.pw.active{display:block}
+.ph{margin-bottom:28px}
+.ph h1{font-size:28px;font-weight:600;margin-bottom:4px}
+.ph p{color:var(--muted-fg);font-size:15px}
+
+/* Cards */
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:20px}
+.card-sm{padding:14px 16px}
+
+/* Grid */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
+.g32{display:grid;grid-template-columns:2fr 1fr;gap:20px}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:9px 18px;border-radius:var(--r);font-size:14px;font-weight:500;cursor:pointer;border:1px solid var(--border);font-family:var(--font);transition:all .15s;white-space:nowrap}
+.btn-p{background:var(--primary);color:#000;border-color:var(--primary);box-shadow:0 0 16px rgba(251,191,36,.15)}
+.btn-p:hover{background:#f0b822}
+.btn-p:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
+.btn-o{background:transparent;color:var(--fg);border-color:var(--border)}
+.btn-o:hover{background:var(--muted)}
+.btn-sm{padding:6px 12px;font-size:13px}
+.btn-full{width:100%}
+.btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2}
+
+/* Inputs */
+input,textarea,select{width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:var(--r);color:var(--fg);font-family:var(--font);font-size:14px;padding:9px 13px;outline:none;transition:border-color .15s}
+input:focus,textarea:focus,select:focus{border-color:var(--primary)}
+input::placeholder,textarea::placeholder{color:var(--muted-fg)}
+textarea{resize:vertical}
+label{font-size:13px;font-weight:500;display:block;margin-bottom:5px;color:var(--muted-fg)}
+.field{margin-bottom:14px}
+
+/* Badges */
+.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:4px;font-size:12px;font-weight:500;border:1px solid}
+.bg{background:rgba(16,185,129,.08);color:#10b981;border-color:rgba(16,185,129,.2)}
+.by{background:rgba(251,191,36,.08);color:#fbbf24;border-color:rgba(251,191,36,.2)}
+.br{background:rgba(239,68,68,.08);color:#ef4444;border-color:rgba(239,68,68,.2)}
+.bi{background:rgba(59,130,246,.08);color:#60a5fa;border-color:rgba(59,130,246,.2)}
+
+/* Score pill */
+.sp{display:inline-block;padding:2px 9px;border-radius:9999px;font-size:12px;font-weight:500}
+.sh{background:rgba(16,185,129,.15);color:#10b981}
+.sm{background:rgba(251,191,36,.15);color:#fbbf24}
+.sl{background:rgba(239,68,68,.15);color:#ef4444}
+
+/* Metric card */
+.mc{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px}
+.mc-label{font-size:12px;color:var(--muted-fg);margin-bottom:4px}
+.mc-val{font-size:26px;font-weight:600}
+.mc-g .mc-val{color:var(--success)}.mc-y .mc-val{color:var(--warning)}.mc-r .mc-val{color:var(--destructive)}.mc-b .mc-val{color:var(--info)}
+
+/* Code / pre */
+pre,.mono{font-family:var(--mono);font-size:12px}
+.cb{background:var(--muted);border:1px solid var(--border);border-radius:6px;padding:12px;font-family:var(--mono);font-size:12px;color:#d1d5db;white-space:pre-wrap;word-break:break-word}
+
+/* Tags */
+.tl{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px}
+.t{display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px}
+.tg{background:rgba(16,185,129,.1);color:#10b981}
+.ty{background:rgba(251,191,36,.1);color:#fbbf24}
+.tr{background:rgba(239,68,68,.1);color:#ef4444}
+.ti{background:rgba(59,130,246,.1);color:#60a5fa}
+.td{background:var(--muted);color:var(--muted-fg)}
+
+/* Table */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:8px 12px;border-bottom:1px solid var(--border);color:var(--muted-fg);font-weight:500;font-size:12px}
+td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.04);vertical-align:middle}
+tr:hover td{background:rgba(255,255,255,.015)}
+
+/* Drop zone */
+.dz{border:1.5px dashed var(--border);border-radius:var(--r);padding:28px 20px;text-align:center;cursor:pointer;transition:all .2s;background:var(--input-bg)}
+.dz:hover,.dz.drag{border-color:var(--primary);background:rgba(251,191,36,.04)}
+.dz svg{width:28px;height:28px;stroke:var(--muted-fg);fill:none;stroke-width:1.5;margin-bottom:8px}
+.dz-lbl{font-size:14px;color:var(--muted-fg)}
+.dz-sub{font-size:12px;color:var(--muted-fg);opacity:.6;margin-top:3px}
+
+/* Service pill */
+.svc-pill{display:inline-flex;align-items:center;gap:6px;background:var(--muted);border:1px solid var(--border);border-radius:20px;padding:4px 10px;font-size:12px;color:var(--muted-fg)}
+
+/* Alert */
+.alert{display:flex;gap:10px;padding:12px 14px;border-radius:var(--r);font-size:13px}
+.alert svg{width:16px;height:16px;flex-shrink:0;margin-top:1px}
+.alert-s{background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);color:#10b981}
+.alert-w{background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.2);color:#fbbf24}
+.alert-e{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);color:#ef4444}
+.alert-i{background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.2);color:#60a5fa}
+
+/* Progress ring */
+.ring-wrap{width:110px;height:110px;position:relative;flex-shrink:0}
+.ring-wrap svg{transform:rotate(-90deg)}
+.ring-bg{fill:none;stroke:var(--border);stroke-width:8}
+.ring-fg{fill:none;stroke:var(--primary);stroke-width:8;stroke-linecap:round;stroke-dasharray:301.59;transition:stroke-dashoffset 1s ease}
+.ring-label{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:600}
+
+/* Toast */
+#toast{position:fixed;bottom:20px;right:20px;display:none;z-index:1000;min-width:240px;max-width:360px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px 16px;font-size:13px;box-shadow:0 8px 32px rgba(0,0,0,.4)}
+#toast.t-s{border-left:3px solid var(--success);color:var(--success)}
+#toast.t-e{border-left:3px solid var(--destructive);color:var(--destructive)}
+#toast.t-i{border-left:3px solid var(--info);color:var(--info)}
+#toast.t-w{border-left:3px solid var(--warning);color:var(--warning)}
+
+/* Spinner */
+.spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(0,0,0,.2);border-top-color:#000;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle}
+.spin-w{border:2px solid rgba(255,255,255,.15);border-top-color:var(--fg)}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Misc */
+.sep{height:1px;background:var(--border);margin:20px 0}
+.mt{margin-top:8px}.mt2{margin-top:16px}.mb{margin-bottom:8px}.mb2{margin-bottom:16px}
+.tc-m{color:var(--muted-fg)}.tc-p{color:var(--primary)}.tc-s{color:var(--success)}.tc-e{color:var(--destructive)}
+.f{display:flex}.fi{align-items:flex-start}.fic{align-items:center}.fjb{justify-content:space-between}.g2u{gap:8px}.g3u{gap:12px}
+.fw{flex-wrap:wrap}
+.h2{font-size:18px;font-weight:600;margin-bottom:12px}
+.h3{font-size:15px;font-weight:600;margin-bottom:8px}
+.ts{font-size:13px}.tx{font-size:12px}
+.gateway-tag{background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.15);color:var(--primary);padding:2px 8px;border-radius:4px;font-size:11px;font-weight:500}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<!-- ══ SIDEBAR ═════════════════════════════════════════════════════════════ -->
+<div class="sidebar">
+  <div class="logo-area">
+    <div class="logo-icon">EZ</div>
+    <div>
+      <div class="logo-name">EzzyHub</div>
+      <div class="logo-badge">AI Verification Platform</div>
+    </div>
+  </div>
+
+  <nav>
+    <div class="nsec">Overview</div>
+    <button class="ni active" onclick="goto('dashboard')">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+      Dashboard
+    </button>
+
+    <div class="nsec">Services</div>
+    <button class="ni" onclick="goto('code')">
+      <svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+      Code Analyzer
+    </button>
+    <button class="ni" onclick="goto('requirements')">
+      <svg viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      Requirement Analyzer
+    </button>
+    <button class="ni" onclick="goto('matching')">
+      <svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      Req ↔ Code Matching
+    </button>
+    <button class="ni" onclick="goto('nlp')">
+      <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      Python NLP
+    </button>
+    <button class="ni" onclick="goto('sonar')">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      Sonar Analyzer
+    </button>
+
+    <div class="nsec">Reports</div>
+    <button class="ni" onclick="goto('report')">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      Verification Report
+    </button>
+
+    <div class="nsec">Developer</div>
+    <button class="ni" onclick="goto('api')">
+      <svg viewBox="0 0 24 24"><path d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+      API Console
+    </button>
+    <button class="ni" onclick="goto('settings')">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M4.93 19.07l1.41-1.41M19.07 19.07l-1.41-1.41M12 2v2M12 20v2M2 12H4M20 12h2"/></svg>
+      Settings
+    </button>
+  </nav>
+
+  <!-- Service health dots -->
+  <div class="svc-panel">
+    <div class="svc-title">Services</div>
+    <div class="svc-row"><span>Gateway :8085</span><span class="dot check" id="dot-gw"></span></div>
+    <div class="svc-row"><span>Req Analyzer :8081</span><span class="dot check" id="dot-req"></span></div>
+    <div class="svc-row"><span>Code Analyzer :8082</span><span class="dot check" id="dot-code"></span></div>
+    <div class="svc-row"><span>Python NLP :8000</span><span class="dot check" id="dot-nlp"></span></div>
+    <div class="svc-row"><span>Sonar Analyzer :8083</span><span class="dot check" id="dot-sonar"></span></div>
+  </div>
+
+  <div class="sidebar-foot">
+    <button class="ni" style="color:var(--destructive)" onclick="alert('Logout — connect auth service')">
+      <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      Logout
+    </button>
+  </div>
+</div>
+
+<!-- ══ MAIN ═════════════════════════════════════════════════════════════════ -->
+<div class="main">
+
+<!-- ─── DASHBOARD ──────────────────────────────────────────────────────── -->
+<div class="pw active" id="page-dashboard">
+  <div class="ph"><h1>Dashboard</h1><p>EzzyHub microservices overview</p></div>
+
+  <!-- Stats row -->
+  <div class="g4 mb2">
+    <div class="mc mc-b"><div class="mc-label">Stored Requirements</div><div class="mc-val" id="stat-reqs">—</div></div>
+    <div class="mc mc-g"><div class="mc-label">Last Coverage</div><div class="mc-val" id="stat-cov">—</div></div>
+    <div class="mc mc-y"><div class="mc-label">Partial</div><div class="mc-val" id="stat-partial">—</div></div>
+    <div class="mc mc-r"><div class="mc-label">Missing</div><div class="mc-val" id="stat-missing">—</div></div>
+  </div>
+
+  <!-- Architecture overview -->
+  <div class="card mb2">
+    <div class="h2">Architecture — Single Gateway Entry Point</div>
+    <p class="ts tc-m mb2">All services are accessible independently or through the API Gateway on port 8085.</p>
+    <div style="background:var(--muted);border-radius:var(--r);padding:16px;font-family:var(--mono);font-size:12px;color:#d1d5db;line-height:2">
+      <span style="color:var(--primary)">Frontend</span> (any port)<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;↓ all requests via<br>
+      <span style="color:var(--primary)">API Gateway</span> :8085<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;├── /api/code/**&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ <span style="color:#60a5fa">Code Analyzer</span> :8082&nbsp;&nbsp;(Java / Spring Boot)<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;├── /api/requirements/** → <span style="color:#a78bfa">Req Analyzer</span> :8081&nbsp;&nbsp;(Java / Spring Boot)<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;├── /api/match&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ <span style="color:#a78bfa">Req Analyzer</span> :8081&nbsp;&nbsp;(matching pipeline)<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;├── /api/nlp/**&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ <span style="color:#34d399">Python NLP</span> :8000&nbsp;&nbsp;(FastAPI / SBERT)<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;└── /api/health&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ <span style="color:var(--primary)">Gateway aggregate health</span>
+    </div>
+  </div>
+
+  <!-- Service health cards -->
+  <div class="g2">
+    <div class="card" id="hc-gw">
+      <div class="f fic fjb mb"><span class="ts" style="font-weight:600">API Gateway</span><span class="dot check" id="hc-dot-gw"></span></div>
+      <div class="tx tc-m mono">localhost:8085&nbsp;<span class="gateway-tag">GATEWAY</span></div>
+      <div class="ts tc-m mt" id="hc-gw-txt">checking...</div>
+    </div>
+    <div class="card" id="hc-req">
+      <div class="f fic fjb mb"><span class="ts" style="font-weight:600">Requirement Analyzer</span><span class="dot check" id="hc-dot-req"></span></div>
+      <div class="tx tc-m mono">localhost:8081 → via /api/requirements</div>
+      <div class="ts tc-m mt" id="hc-req-txt">checking...</div>
+    </div>
+    <div class="card" id="hc-code">
+      <div class="f fic fjb mb"><span class="ts" style="font-weight:600">Code Analyzer</span><span class="dot check" id="hc-dot-code"></span></div>
+      <div class="tx tc-m mono">localhost:8082 → via /api/code</div>
+      <div class="ts tc-m mt" id="hc-code-txt">checking...</div>
+    </div>
+    <div class="card" id="hc-nlp">
+      <div class="f fic fjb mb"><span class="ts" style="font-weight:600">Python NLP</span><span class="dot check" id="hc-dot-nlp"></span></div>
+      <div class="tx tc-m mono">localhost:8000 → via /api/nlp</div>
+      <div class="ts tc-m mt" id="hc-nlp-txt">checking...</div>
+      <div id="hc-nlp-models" class="tx tc-m" style="margin-top:4px"></div>
+    </div>
+  </div>
+
+  <div class="sep"></div>
+  <div class="f fic g3u">
+    <button class="btn btn-p" onclick="checkAll()">
+      <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+      Refresh Status
+    </button>
+    <button class="btn btn-o" onclick="loadDashStats()">Load Stats</button>
+  </div>
+</div>
+
+<!-- ─── CODE ANALYZER ─────────────────────────────────────────────────── -->
+<div class="pw" id="page-code">
+  <div class="ph">
+    <h1>Code Analyzer</h1>
+    <p>Upload a ZIP file and get a semantic analysis of every class, method, and field.
+       <span class="svc-pill"><span class="dot check" id="dot-code2"></span>:8082 via /api/code</span></p>
+  </div>
+
+  <div class="g32">
+    <div>
+      <div class="card mb2">
+        <div class="h3">Upload Project ZIP</div>
+        <p class="ts tc-m mb2">Supports any language. ZIP up to 1 GB. Large projects are analyzed in parallel batches.</p>
+        <div class="dz" id="code-dz" onclick="document.getElementById('code-fi-input').click()"
+          ondragover="event.preventDefault();this.classList.add('drag')"
+          ondragleave="this.classList.remove('drag')"
+          ondrop="handleCodeDrop(event)">
+          <svg viewBox="0 0 24 24"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+          <div class="dz-lbl" id="code-dz-lbl">Drop ZIP here or click to browse</div>
+          <div class="dz-sub">Java · Python · TypeScript · Go · Rust · any language</div>
+        </div>
+        <input type="file" id="code-fi-input" accept=".zip" style="display:none" onchange="onCodeFile(this)"/>
+        <div id="code-file-info" style="display:none" class="alert alert-i mt">
+          <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <span id="code-file-lbl"></span>
+        </div>
+        <button class="btn btn-p btn-full mt2" id="code-btn" onclick="analyzeCode()" disabled>
+          <span id="code-spin" style="display:none" class="spin"></span>
+          <svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          Analyze Code
+        </button>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <div class="h3">What you'll get</div>
+        <div class="ts tc-m" style="line-height:1.8">
+          ✓ Semantic role of every file<br>
+          ✓ Class and method descriptions<br>
+          ✓ Field-level semantic meaning<br>
+          ✓ Dependency graph<br>
+          ✓ Language & tech stack detection<br>
+          ✓ Parallel LLM analysis (fast)
+        </div>
+        <div class="sep"></div>
+        <div class="h3">LLM Provider</div>
+        <div class="ts tc-m">Configured via <code class="tx">LLM_PROVIDER</code> env var.<br>
+          Supports: Anthropic · OpenAI · Grok · Groq · Cohere · Gemini
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="code-result" style="display:none" class="mt2"></div>
+</div>
+
+<!-- ─── REQUIREMENT ANALYZER ────────────────────────────────────────────── -->
+<div class="pw" id="page-requirements">
+  <div class="ph">
+    <h1>Requirement Analyzer</h1>
+    <p>Enter functional requirements — each line is one requirement.
+       <span class="svc-pill"><span class="dot check" id="dot-req2"></span>:8081 via /api/requirements</span></p>
+  </div>
+
+  <div class="g32">
+    <div>
+      <div class="card mb2">
+        <div class="f fic fjb mb">
+          <div class="h3" style="margin:0">Requirements Input</div>
+          <div class="f fic g2u">
+            <span id="req-badge" class="badge by">0 / 100</span>
+            <button class="btn btn-o btn-sm" onclick="loadSamples()">Load Samples</button>
+          </div>
+        </div>
+        <textarea id="req-ta" rows="14" placeholder="FR-1.1.1 Allow a new user to create an account using username/email and password.&#10;FR-1.2.1 Allow registered users to log in using valid credentials.&#10;FR-2.1.1 Allow users to import source code from GitHub repositories.&#10;&#10;One requirement per line. Supports FR-X.Y.Z, RE-N, 1. , [N], or plain text." oninput="onReqInput()"></textarea>
+        <div id="req-warn"></div>
+        <div class="f fic g2u mt2">
+          <button class="btn btn-p" id="req-btn" onclick="processReqs()">
+            <span id="req-spin" style="display:none" class="spin"></span>
+            <svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            Analyze Requirements
+          </button>
+          <label style="display:flex;align-items:center;gap:6px;margin:0;cursor:pointer;font-size:13px;color:var(--muted-fg)">
+            <input type="checkbox" id="skip-ai" style="width:auto;padding:0"/>
+            Skip AI validation
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <div class="h3">Preview</div>
+        <div id="req-prev" style="max-height:260px;overflow-y:auto">
+          <p class="ts tc-m" style="text-align:center;padding:24px 0">No requirements entered yet</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="req-results" style="display:none" class="mt2"></div>
+</div>
+
+<!-- ─── MATCHING ───────────────────────────────────────────────────────── -->
+<div class="pw" id="page-matching">
+  <div class="ph">
+    <h1>Req ↔ Code Matching</h1>
+    <p>Upload your project ZIP — requirements already stored are matched against the code.
+       <span class="svc-pill"><span class="dot check" id="dot-match"></span>POST /api/match</span></p>
+  </div>
+
+  <div class="g32">
+    <div>
+      <div class="card mb2">
+        <div class="h3">Project ZIP</div>
+        <div class="dz" id="match-dz" onclick="document.getElementById('match-fi-input').click()"
+          ondragover="event.preventDefault();this.classList.add('drag')"
+          ondragleave="this.classList.remove('drag')"
+          ondrop="handleMatchDrop(event)">
+          <svg viewBox="0 0 24 24"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+          <div class="dz-lbl" id="match-dz-lbl">Drop project ZIP here</div>
+          <div class="dz-sub">Up to 1 GB · ZIP format</div>
+        </div>
+        <input type="file" id="match-fi-input" accept=".zip" style="display:none" onchange="onMatchFile(this)"/>
+        <div class="field mt2">
+          <label>Filter by Requirement IDs (optional, comma-separated)</label>
+          <input id="match-ids" type="text" placeholder="REQ-USER-1, REQ-AUTH-2"/>
+        </div>
+        <button class="btn btn-p btn-full" id="match-btn" onclick="runMatching()">
+          <span id="match-spin" style="display:none" class="spin spin-w"></span>
+          <svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          Run Matching Pipeline
+        </button>
+        <p class="tx tc-m mt" style="text-align:center">Pipeline: Req Analyzer :8081 → Code Analyzer :8082 → Python NLP :8000</p>
+      </div>
+    </div>
+
+    <!-- Coverage ring + counters -->
+    <div>
+      <div class="card">
+        <div class="h3">Coverage</div>
+        <div class="f fic g3u mb2">
+          <div class="ring-wrap">
+            <svg width="110" height="110" viewBox="0 0 110 110">
+              <circle class="ring-bg" cx="55" cy="55" r="48"/>
+              <circle class="ring-fg" id="ring" cx="55" cy="55" r="48" style="stroke-dashoffset:301.59"/>
+            </svg>
+            <div class="ring-label" id="cov-pct">0%</div>
+          </div>
+          <div>
+            <div class="f fic g2u mb"><span class="badge bg">IMPL</span><span class="ts" id="m-impl">—</span></div>
+            <div class="f fic g2u mb"><span class="badge by">PART</span><span class="ts" id="m-part">—</span></div>
+            <div class="f fic g2u"><span class="badge br">MISS</span><span class="ts" id="m-miss">—</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results table -->
+  <div id="match-results" style="display:none" class="mt2">
+    <div class="card mb2">
+      <div class="f fic fjb mb2">
+        <div class="h2" style="margin:0">Match Results</div>
+        <div class="f fic g2u">
+          <input type="text" id="match-search" placeholder="Search..." style="width:180px" oninput="filterMatch()"/>
+          <select id="match-filter" style="width:140px" onchange="filterMatch()">
+            <option value="all">All statuses</option>
+            <option value="IMPLEMENTED">Implemented</option>
+            <option value="PARTIAL">Partial</option>
+            <option value="MISSING">Missing</option>
+          </select>
+          <button class="btn btn-o btn-sm" onclick="exportReport()">
+            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Export JSON
+          </button>
+        </div>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Requirement</th><th style="text-align:center">Score</th><th style="text-align:center">Status</th><th>Matched Code</th></tr></thead>
+          <tbody id="match-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- AI Suggestions section -->
+    <div class="card" id="suggestions-card" style="display:none">
+      <div class="h2">AI Suggestions</div>
+      <div id="sugg-content"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── PYTHON NLP ─────────────────────────────────────────────────────── -->
+<div class="pw" id="page-nlp">
+  <div class="ph">
+    <h1>Python NLP Service</h1>
+    <p>Directly test preprocessing and embedding endpoints.
+       <span class="svc-pill"><span class="dot check" id="dot-nlp2"></span>:8000 via /api/nlp</span></p>
+  </div>
+  <div class="g2">
+    <div class="card">
+      <div class="h3">Preprocess Text</div>
+      <div class="tx tc-m mono mb">POST /api/nlp/preprocess</div>
+      <div class="field">
+        <label>Input text</label>
+        <textarea id="nlp-pre-text" rows="4" placeholder="The system shall allow registered users to log in using valid credentials."></textarea>
+      </div>
+      <button class="btn btn-p" onclick="nlpPreprocess()">
+        <span id="nlp-pre-spin" style="display:none" class="spin"></span>Preprocess
+      </button>
+      <div id="nlp-pre-result" class="mt2"></div>
+    </div>
+    <div class="card">
+      <div class="h3">Embed + Preprocess</div>
+      <div class="tx tc-m mono mb">POST /api/nlp/preprocess-and-embed</div>
+      <div class="field">
+        <label>Input text</label>
+        <textarea id="nlp-emb-text" rows="4" placeholder="Allow users to login and register accounts."></textarea>
+      </div>
+      <button class="btn btn-p" onclick="nlpEmbed()">
+        <span id="nlp-emb-spin" style="display:none" class="spin"></span>Embed
+      </button>
+      <div id="nlp-emb-result" class="mt2"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── REPORT ─────────────────────────────────────────────────────────── -->
+<div class="pw" id="page-report">
+  <div class="ph"><h1>Verification Report</h1><p>Latest matching report generated from the last run.</p></div>
+  <div id="report-content">
+    <div class="alert alert-i"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+    Run the Req ↔ Code Matching pipeline first to generate a report.</div>
+  </div>
+</div>
+
+<!-- ─── API CONSOLE ────────────────────────────────────────────────────── -->
+<div class="pw" id="page-api">
+  <div class="ph"><h1>API Console</h1><p>Test individual endpoints. All calls go through the API Gateway on port 8085.</p></div>
+
+  <div class="g2">
+    <!-- Single requirement -->
+    <div class="card">
+      <div class="h3">Analyze Single Requirement</div>
+      <div class="tx tc-m mono mb">POST /api/requirements/analyze</div>
+      <div class="field">
+        <label>Requirement text</label>
+        <textarea id="api-req-text" rows="3" placeholder="FR-1.2.1 Allow registered users to log in using valid credentials."></textarea>
+      </div>
+      <div class="f fic g2u">
+        <button class="btn btn-p btn-sm" onclick="apiAnalyze()">
+          <span id="api-a-spin" style="display:none" class="spin"></span>Send
+        </button>
+        <label style="display:flex;align-items:center;gap:5px;margin:0;cursor:pointer;font-size:12px;color:var(--muted-fg)">
+          <input type="checkbox" id="api-skip" style="width:auto;padding:0"/>Skip AI
+        </label>
+      </div>
+    </div>
+
+    <!-- List requirements -->
+    <div class="card">
+      <div class="h3">List All Requirements</div>
+      <div class="tx tc-m mono mb">GET /api/requirements</div>
+      <p class="ts tc-m mb2">Returns all stored requirements (summary DTOs, no embedding blobs).</p>
+      <button class="btn btn-p btn-sm" onclick="apiList()">
+        <span id="api-l-spin" style="display:none" class="spin"></span>Fetch
+      </button>
+    </div>
+
+    <!-- Health -->
+    <div class="card">
+      <div class="h3">Aggregate Health Check</div>
+      <div class="tx tc-m mono mb">GET /api/health</div>
+      <p class="ts tc-m mb2">Returns status of all 3 downstream services in one call.</p>
+      <button class="btn btn-p btn-sm" onclick="apiHealth()">
+        <span id="api-h-spin" style="display:none" class="spin"></span>Check
+      </button>
+    </div>
+
+    <!-- Code analyze -->
+    <div class="card">
+      <div class="h3">Code Analyzer Info</div>
+      <div class="tx tc-m mono mb">GET /api/code/health</div>
+      <p class="ts tc-m mb2">Returns code analyzer status, LLM provider, and configured model.</p>
+      <button class="btn btn-p btn-sm" onclick="apiCodeHealth()">
+        <span id="api-ch-spin" style="display:none" class="spin"></span>Check
+      </button>
+    </div>
+  </div>
+
+  <div class="card mt2">
+    <div class="h3">Response</div>
+    <div id="api-resp" class="cb" style="min-height:80px;max-height:500px;overflow-y:auto">
+      <span class="tc-m">&lt;— make a request above</span>
+    </div>
+  </div>
+</div>
+
+<!-- ─── SETTINGS ───────────────────────────────────────────────────────── -->
+<div class="pw" id="page-settings">
+  <div class="ph"><h1>Settings</h1><p>Gateway URL is the single entry point. Direct URLs are for debugging only.</p></div>
+  <div class="card" style="max-width:600px">
+    <div class="h3">Service URLs</div>
+    <div class="field">
+      <label>API Gateway (primary — use this for all requests)</label>
+      <input type="text" id="cfg-gw" value="http://localhost:8085"/>
+    </div>
+    <div class="field">
+      <label>Requirement Analyzer (direct — debug only)</label>
+      <input type="text" id="cfg-req" value="http://localhost:8081"/>
+    </div>
+    <div class="field">
+      <label>Code Analyzer (direct — debug only)</label>
+      <input type="text" id="cfg-code" value="http://localhost:8082"/>
+    </div>
+    <div class="field">
+      <label>Python NLP (direct — debug only)</label>
+      <input type="text" id="cfg-nlp" value="http://localhost:8000"/>
+    </div>
+    <div class="field">
+      <label>Sonar Analyzer (direct — for sonar analysis)</label>
+      <input type="text" id="cfg-sonar" value="http://localhost:8083"/>
+    </div>
+    <div class="f fic g2u">
+      <button class="btn btn-p btn-sm" onclick="saveCfg()">Save</button>
+      <button class="btn btn-o btn-sm" onclick="resetCfg()">Reset Defaults</button>
+    </div>
+    <div class="sep"></div>
+    <div class="h3">Quick Start</div>
+    <pre class="cb"># 1. Start Python NLP (port 8000)
+cd python-microservice
+pip install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 8000
+
+# 2. Start Requirement Analyzer (port 8081)
+cd Requirement-Analyzer
+mvn spring-boot:run
+
+# 3. Start Code Analyzer (port 8082)
+cd Code-Analyzer/backend
+mvn spring-boot:run
+
+# 4. Start API Gateway (port 8085)
+cd api-gateway
+mvn spring-boot:run
+
+# 5. Start Sonar Analyzer (port 8083)
+cd Backend/Sonar-Analyzer/backend
+node server.js
+
+# All services are now available via http://localhost:8085/api/*
+# Sonar Analyzer available at http://localhost:8083</pre>
+  </div>
+</div>
+
+
+<div class="pw" id="page-sonar">
+  <div class="ph">
+    <h1>Sonar Analyzer</h1>
+    <p>Upload a ZIP file to run SonarQube static analysis and get a detailed issues report.
+       <span class="svc-pill"><span class="dot check" id="dot-sonar2"></span>:8083 via /api/analyze</span></p>
+  </div>
+
+  <!-- Upload Card -->
+  <div class="card" id="sonar-upload-section">
+    <div class="dz" id="sonar-dz" onclick="document.getElementById('sonar-fi-input').click()"
+         ondragover="event.preventDefault();this.classList.add('drag')"
+         ondragleave="this.classList.remove('drag')"
+         ondrop="handleSonarDrop(event)">
+      <svg viewBox="0 0 24 24"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0018 9h-1.26A8 8 0 103 16.3"/></svg>
+      <div class="dz-lbl" id="sonar-dz-lbl">Drop ZIP here or click to browse</div>
+      <div class="dz-sub">Supports Spring Boot, Maven, Gradle projects</div>
+    </div>
+    <input type="file" id="sonar-fi-input" accept=".zip" style="display:none" onchange="onSonarFile(this)"/>
+    <div id="sonar-file-info" style="display:none" class="alert alert-i mt">
+      <svg viewBox="0 0 24 24" width="16" height="16" style="stroke:currentColor;fill:none;stroke-width:2;flex-shrink:0"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      <span id="sonar-file-lbl"></span>
+    </div>
+
+    <div class="g3 mt2">
+      <div class="field">
+        <label>Project Name</label>
+        <input type="text" id="sonar-project-name" placeholder="my-spring-app"/>
+      </div>
+      <div class="field">
+        <label>SonarQube URL</label>
+        <input type="text" id="sonar-url-input" value="http://localhost:9000"/>
+      </div>
+      <div class="field">
+        <label>Sonar API URL</label>
+        <input type="text" id="sonar-api-url-input" value="http://localhost:8083"/>
+      </div>
+    </div>
+
+    <button class="btn btn-p btn-full mt2" id="sonar-btn" onclick="runSonarAnalysis()" disabled>
+      <span id="sonar-spin" style="display:none" class="spin"></span>
+      <svg viewBox="0 0 24 24" width="15" height="15" style="stroke:currentColor;fill:none;stroke-width:2;flex-shrink:0"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      Run Sonar Analysis
+    </button>
+    <div id="sonar-error" style="display:none" class="alert alert-e mt"></div>
+  </div>
+
+  <!-- Loading -->
+  <div id="sonar-loading" style="display:none" class="card mt2">
+    <div style="text-align:center;padding:2rem">
+      <div style="width:40px;height:40px;border:2px solid rgba(251,191,36,.2);border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 1.25rem"></div>
+      <div class="h3" style="margin-bottom:4px">Analyzing your project...</div>
+      <p class="ts tc-m">This may take 1–3 minutes depending on project size</p>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:1.5rem;text-align:left;max-width:280px;margin-left:auto;margin-right:auto">
+        <div class="f fic g2u ts" id="sonar-step-1"><span style="width:7px;height:7px;border-radius:50%;background:var(--primary);flex-shrink:0;display:inline-block"></span> Uploading ZIP file</div>
+        <div class="f fic g2u ts tc-m" id="sonar-step-2"><span style="width:7px;height:7px;border-radius:50%;background:var(--muted-fg);flex-shrink:0;display:inline-block"></span> Extracting project</div>
+        <div class="f fic g2u ts tc-m" id="sonar-step-3"><span style="width:7px;height:7px;border-radius:50%;background:var(--muted-fg);flex-shrink:0;display:inline-block"></span> Running sonar-scanner</div>
+        <div class="f fic g2u ts tc-m" id="sonar-step-4"><span style="width:7px;height:7px;border-radius:50%;background:var(--muted-fg);flex-shrink:0;display:inline-block"></span> Fetching analysis results</div>
+        <div class="f fic g2u ts tc-m" id="sonar-step-5"><span style="width:7px;height:7px;border-radius:50%;background:var(--muted-fg);flex-shrink:0;display:inline-block"></span> Building report</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div id="sonar-results" style="display:none" class="mt2">
+    <div class="f fic fjb mb2 fw">
+      <div>
+        <div class="h2" id="sonar-report-title">Analysis Report</div>
+        <div class="tx mono tc-m mt" id="sonar-report-meta"></div>
+      </div>
+      <div class="f g2u fw">
+        <span id="sonar-quality-gate" class="badge"></span>
+        <button class="btn btn-p btn-sm" onclick="sonarDownloadJSON()">
+          <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download JSON
+        </button>
+        <button class="btn btn-o btn-sm" onclick="resetSonarAnalysis()">← New Analysis</button>
+      </div>
+    </div>
+
+    <!-- Metrics -->
+    <div class="g4 mb2" id="sonar-metrics-grid"></div>
+
+    <!-- Severity pills -->
+    <div class="f fw g2u mb2" id="sonar-severity-bar"></div>
+
+    <!-- Filter -->
+    <div class="f fw g2u mb2" id="sonar-filter-bar"></div>
+
+    <!-- Issues by file -->
+    <div class="tx tc-m mb" id="sonar-files-title"></div>
+    <div id="sonar-issues-container"></div>
+  </div>
+</div>
+
+</div><!-- /main -->
+</div><!-- /shell -->
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+// ── Config ────────────────────────────────────────────────────────────────────
+// All requests go through the gateway. Direct URLs are kept for health-check
+// probing only (so we can tell the user which specific service is down).
+let cfg = {
+  gw:    'http://localhost:8085',
+  req:   'http://localhost:8081',
+  code:  'http://localhost:8082',
+  nlp:   'http://localhost:8000',
+  sonar: 'http://localhost:8083',
+};
+
+function loadCfg() {
+  try {
+    const s = localStorage.getItem('ezzyhub-cfg');
+    if (s) Object.assign(cfg, JSON.parse(s));
+  } catch(e) {}
+  document.getElementById('cfg-gw').value    = cfg.gw;
+  document.getElementById('cfg-req').value   = cfg.req;
+  document.getElementById('cfg-code').value  = cfg.code;
+  document.getElementById('cfg-nlp').value   = cfg.nlp;
+  document.getElementById('cfg-sonar').value = cfg.sonar;
+}
+function saveCfg() {
+  cfg.gw    = document.getElementById('cfg-gw').value.trim().replace(/\/$/,'');
+  cfg.req   = document.getElementById('cfg-req').value.trim().replace(/\/$/,'');
+  cfg.code  = document.getElementById('cfg-code').value.trim().replace(/\/$/,'');
+  cfg.nlp   = document.getElementById('cfg-nlp').value.trim().replace(/\/$/,'');
+  cfg.sonar = document.getElementById('cfg-sonar').value.trim().replace(/\/$/,'');
+  localStorage.setItem('ezzyhub-cfg', JSON.stringify(cfg));
+  toast('Settings saved', 'success');
+  checkAll();
+}
+function resetCfg() {
+  cfg = {gw:'http://localhost:8085',req:'http://localhost:8081',code:'http://localhost:8082',nlp:'http://localhost:8000',sonar:'http://localhost:8083'};
+  localStorage.removeItem('ezzyhub-cfg');
+  loadCfg(); toast('Reset to defaults', 'info');
+}
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+function goto(name) {
+  document.querySelectorAll('.pw').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.ni').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  // highlight nav button
+  document.querySelectorAll('.ni').forEach(b => {
+    if (b.getAttribute('onclick') === "goto('" + name + "')") b.classList.add('active');
+  });
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+let _toastTimer = null;
+function toast(msg, type = 'info') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 't-' + type[0];
+  el.style.display = 'block';
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { el.style.display = 'none'; }, 3500);
+}
+
+// ── Health checks ─────────────────────────────────────────────────────────────
+async function probe(url, path, timeout = 4000) {
+  try {
+    const r = await fetch(url + path, { signal: AbortSignal.timeout(timeout) });
+    const j = await r.json().catch(() => ({}));
+    return { ok: r.ok, body: j };
+  } catch(e) {
+    return { ok: false, body: {}, err: e.message };
+  }
+}
+
+function setDot(id, up) {
+  document.querySelectorAll('#dot-' + id + ', #hc-dot-' + id).forEach(d => {
+    d.className = 'dot ' + (up ? 'up' : 'down');
+  });
+}
+
+async function checkAll() {
+  // Probe gateway aggregate (covers all 3 downstream services in one call)
+  const gw = await probe(cfg.gw, '/api/health');
+  setDot('gw', gw.ok);
+  const gwTxt = document.getElementById('hc-gw-txt');
+  if (gwTxt) gwTxt.textContent = gw.ok ? 'UP — all routes active' : ('DOWN — ' + (gw.err || 'unreachable'));
+
+  if (gw.ok && gw.body.services) {
+    const svcs = gw.body.services;
+    // req
+    const rUp = svcs['requirement-analyzer']?.status === 'UP';
+    setDot('req', rUp);
+    document.querySelectorAll('#dot-req2, #dot-match').forEach(d => d.className = 'dot ' + (rUp?'up':'down'));
+    const rTxt = document.getElementById('hc-req-txt');
+    if (rTxt) rTxt.textContent = rUp ? 'UP' : ('DOWN — ' + (svcs['requirement-analyzer']?.error || ''));
+    // code
+    const cUp = svcs['code-analyzer']?.status === 'UP';
+    setDot('code', cUp);
+    document.querySelectorAll('#dot-code2').forEach(d => d.className = 'dot ' + (cUp?'up':'down'));
+    const cTxt = document.getElementById('hc-code-txt');
+    if (cTxt) cTxt.textContent = cUp ? 'UP' : ('DOWN — ' + (svcs['code-analyzer']?.error || ''));
+    // nlp
+    const nUp = svcs['python-nlp']?.status === 'UP';
+    setDot('nlp', nUp);
+    document.querySelectorAll('#dot-nlp2').forEach(d => d.className = 'dot ' + (nUp?'up':'down'));
+    const nTxt = document.getElementById('hc-nlp-txt');
+    if (nTxt) nTxt.textContent = nUp ? 'UP' : ('DOWN — ' + (svcs['python-nlp']?.error || ''));
+    const nMod = document.getElementById('hc-nlp-models');
+    if (nMod) {
+      const sbert = svcs['python-nlp']?.sbert_loaded;
+      const w2v   = svcs['python-nlp']?.word2vec_loaded;
+      nMod.innerHTML = sbert != null
+        ? `<span class="${sbert?'tc-s':'tc-e'}">SBERT: ${sbert?'✓ loaded':'✗ not loaded'}</span>
+           &nbsp;<span class="${w2v?'tc-s':'tc-m'}">Word2Vec: ${w2v?'✓':'loading…'}</span>`
+        : '';
+    }
+  } else {
+    // Gateway down — probe each service directly
+    ['req','code','nlp'].forEach(svc => setDot(svc, false));
+  }
+  // Sonar Analyzer is standalone — probe directly
+  const sonar = await probe(cfg.sonar, '/health');
+  setDot('sonar', sonar.ok);
+  document.querySelectorAll('#dot-sonar2').forEach(d => d.className = 'dot ' + (sonar.ok ? 'up' : 'down'));
+  if (document.getElementById('sonar-api-url-input')) {
+    document.getElementById('sonar-api-url-input').value = cfg.sonar;
+  }
+}
+
+async function loadDashStats() {
+  const r = await probe(cfg.gw, '/api/requirements');
+  if (r.ok && Array.isArray(r.body)) {
+    document.getElementById('stat-reqs').textContent = r.body.length;
+  }
+}
+
+// ── Code Analyzer ─────────────────────────────────────────────────────────────
+let _codeFile = null;
+
+function onCodeFile(input) {
+  _codeFile = input.files[0];
+  if (!_codeFile) return;
+  document.getElementById('code-file-info').style.display = 'flex';
+  document.getElementById('code-file-lbl').textContent =
+    _codeFile.name + ' (' + ((_codeFile.size / 1024 / 1024).toFixed(1)) + ' MB)';
+  document.getElementById('code-btn').disabled = false;
+  document.getElementById('code-dz-lbl').textContent = _codeFile.name;
+}
+function handleCodeDrop(e) {
+  e.preventDefault();
+  document.getElementById('code-dz').classList.remove('drag');
+  const f = e.dataTransfer.files[0];
+  if (f) { document.getElementById('code-fi-input').files; _codeFile = f; onCodeFile({files:[f]}); }
+}
+
+async function analyzeCode() {
+  if (!_codeFile) { toast('Select a ZIP file first', 'error'); return; }
+  const btn = document.getElementById('code-btn'), spin = document.getElementById('code-spin');
+  btn.disabled = true; spin.style.display = 'inline-block';
+  toast('Analyzing code — this may take a few minutes for large projects…', 'info');
+  const fd = new FormData();
+  fd.append('file', _codeFile);
+  try {
+    // Route through gateway: /api/code/analyze → Code Analyzer :8082/api/v1/analyze
+    const r = await fetch(cfg.gw + '/api/code/analyze', {
+      method: 'POST', body: fd, signal: AbortSignal.timeout(900000)
+    });
+    const d = await r.json();
+    renderCodeResult(d, r.status);
+    toast(r.ok ? 'Code analysis complete!' : 'Error ' + r.status, r.ok ? 'success' : 'error');
+  } catch(e) {
+    toast('Code Analyzer unreachable: ' + e.message, 'error');
+    document.getElementById('code-result').style.display = 'block';
+    document.getElementById('code-result').innerHTML =
+      `<div class="alert alert-e"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/>
+       <line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>${e.message}</div>`;
+  }
+  btn.disabled = false; spin.style.display = 'none';
+}
+
+function renderCodeResult(d, status) {
+  const el = document.getElementById('code-result');
+  el.style.display = 'block';
+  const files = d.fileAnalyses || [];
+  el.innerHTML = `
+    <div class="card">
+      <div class="f fic fjb mb2">
+        <div class="h2" style="margin:0">Analysis Complete</div>
+        <span class="badge ${status < 300 ? 'bg' : 'br'}">HTTP ${status}</span>
+      </div>
+      <div class="g4 mb2">
+        <div class="mc mc-b"><div class="mc-label">Files Analyzed</div><div class="mc-val">${d.analyzedFileCount || files.length}</div></div>
+        <div class="mc mc-g"><div class="mc-label">Total Source</div><div class="mc-val">${d.totalSourceFiles || '—'}</div></div>
+        <div class="mc"><div class="mc-label">LLM</div><div style="font-size:13px;font-weight:500;margin-top:4px">${d.llmProvider || '—'}</div></div>
+        <div class="mc"><div class="mc-label">Time (ms)</div><div class="mc-val" style="font-size:20px">${d.processingTimeMs || '—'}</div></div>
+      </div>
+      ${d.summary ? `<div class="cb mb2">${d.summary}</div>` : ''}
+      <details><summary class="ts tc-m" style="cursor:pointer">Full JSON (${files.length} file analyses)</summary>
+      <pre class="cb" style="max-height:400px;overflow-y:auto;margin-top:8px">${JSON.stringify(d, null, 2).substring(0, 8000)}</pre>
+      </details>
+    </div>`;
+}
+
+// ── Requirement Analyzer ──────────────────────────────────────────────────────
+const SAMPLES = `FR-1.1.1 Allow a new user to create an account using username/email and password.
+FR-1.2.1 Allow registered users to log in using valid credentials.
+FR-1.2.2 Deny access if credentials are incorrect.
+FR-2.1.1 Allow users to import source code from GitHub repositories.
+FR-2.2.1 Allow users to upload ZIP files.
+FR-3.1.1 Accept 1-100 functional requirements.
+FR-3.2.1 Remove stop words and extract keywords.
+FR-7.1.2 System calculates a similarity score using Jaccard similarity algorithm.
+FR-7.2.1 System classifies requirements as IMPLEMENTED, PARTIAL, or MISSING.
+FR-8.1.1 System sends requirement text to AI API for code suggestion.
+FR-9.1.1 Perform static analysis on AI-generated code to verify syntactic correctness.`;
+
+function loadSamples() { document.getElementById('req-ta').value = SAMPLES; onReqInput(); }
+
+function onReqInput() {
+  const lines = document.getElementById('req-ta').value.split('\n').filter(l => l.trim());
+  const n = lines.length;
+  const b = document.getElementById('req-badge');
+  b.textContent = n + ' / 100';
+  b.className = 'badge ' + (n > 100 ? 'br' : n > 0 ? 'by' : 'bi');
+  const prev = document.getElementById('req-prev');
+  if (!lines.length) {
+    prev.innerHTML = '<p class="ts tc-m" style="text-align:center;padding:24px 0">No requirements entered yet</p>';
+    return;
+  }
+  prev.innerHTML = lines.slice(0, 10).map(l =>
+    `<div class="f fic g2u" style="padding:4px 0;border-bottom:1px solid var(--border)">
+       <svg viewBox="0 0 24 24" width="14" height="14" style="stroke:#10b981;fill:none;stroke-width:2;flex-shrink:0"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+       <span class="ts">${l.substring(0, 100)}${l.length > 100 ? '…' : ''}</span>
+     </div>`
+  ).join('') + (lines.length > 10 ? `<p class="tx tc-m" style="text-align:center;padding:8px 0">+ ${lines.length - 10} more</p>` : '');
+  document.getElementById('req-warn').innerHTML = n > 100
+    ? `<div class="alert alert-e mt">Max 100 requirements allowed</div>` : '';
+}
+
+async function processReqs() {
+  const lines = document.getElementById('req-ta').value.split('\n').filter(l => l.trim());
+  if (!lines.length) { toast('Enter at least one requirement', 'error'); return; }
+  if (lines.length > 100) { toast('Maximum 100 requirements', 'error'); return; }
+  const btn = document.getElementById('req-btn'), spin = document.getElementById('req-spin');
+  btn.disabled = true; spin.style.display = 'inline-block';
+  toast(`Sending ${lines.length} requirements…`, 'info');
+  try {
+    const r = await fetch(cfg.gw + '/api/requirements/analyze/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requirements: lines,
+        skipAiValidation: document.getElementById('skip-ai').checked
+      })
+    });
+    const data = await r.json();
+    renderReqResults(data);
+    if (Array.isArray(data)) document.getElementById('stat-reqs').textContent = data.length;
+    toast(`Done — ${lines.length} requirements processed`, 'success');
+  } catch(e) {
+    toast('Requirement Analyzer unreachable: ' + e.message, 'error');
+    document.getElementById('req-results').style.display = 'block';
+    document.getElementById('req-results').innerHTML =
+      `<div class="alert alert-e"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/>
+       <line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+       ${e.message}</div>`;
+  }
+  btn.disabled = false; spin.style.display = 'none';
+}
+
+function renderReqResults(data) {
+  const el = document.getElementById('req-results');
+  el.style.display = 'block';
+  if (!Array.isArray(data)) {
+    el.innerHTML = `<div class="alert alert-e">Unexpected response format</div>`;
+    return;
+  }
+  const v = data.filter(d => d.status === 'VALID').length;
+  el.innerHTML = `
+    <div class="card">
+      <div class="h2">Batch Results</div>
+      <div class="g4 mb2">
+        <div class="mc mc-b"><div class="mc-label">Total</div><div class="mc-val">${data.length}</div></div>
+        <div class="mc mc-g"><div class="mc-label">Valid</div><div class="mc-val">${v}</div></div>
+        <div class="mc mc-r"><div class="mc-label">Invalid</div><div class="mc-val">${data.length - v}</div></div>
+        <div class="mc"><div class="mc-label">Pass Rate</div><div class="mc-val">${Math.round(v / data.length * 100)}%</div></div>
+      </div>
+      ${data.map(d => `
+        <div style="border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:8px;border-left:3px solid ${d.status === 'VALID' ? 'var(--success)' : 'var(--destructive)'}">
+          <div class="f fic fjb mb">
+            <div class="f fic g2u">
+              <span class="badge ${d.status === 'VALID' ? 'bg' : 'br'}">${d.status || '?'}</span>
+              <span class="tx mono tc-m">${d.reqId || '?'}</span>
+              ${d.validationConfidence != null ? `<span class="tx tc-m">${(d.validationConfidence * 100).toFixed(0)}% AI confidence</span>` : ''}
+            </div>
+            <button class="btn btn-o btn-sm" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'">details</button>
+          </div>
+          <div class="ts" style="line-height:1.5">${(d.reqText || d.originalInput || '').substring(0, 120)}${(d.reqText || d.originalInput || '').length > 120 ? '…' : ''}</div>
+          <div style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+            ${renderTags('Keywords', d.keywords, 'tg')}
+            ${renderTags('Action Verbs', d.actionVerbs, 'ty')}
+            ${d.warnings?.length ? renderTags('Warnings', d.warnings, 'tr') : ''}
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+function renderTags(label, arr, cls) {
+  if (!arr || !arr.length) return '';
+  return `<div class="mb"><div class="tx tc-m mb">${label}</div>
+    <div class="tl">${arr.slice(0, 20).map(t => `<span class="t ${cls}">${t}</span>`).join('')}</div></div>`;
+}
+
+// ── Matching ──────────────────────────────────────────────────────────────────
+let _matchFile = null, _matchData = [];
+
+function onMatchFile(input) {
+  _matchFile = input.files[0];
+  if (_matchFile) document.getElementById('match-dz-lbl').textContent = _matchFile.name;
+}
+function handleMatchDrop(e) {
+  e.preventDefault();
+  document.getElementById('match-dz').classList.remove('drag');
+  const f = e.dataTransfer.files[0];
+  if (f) { _matchFile = f; document.getElementById('match-dz-lbl').textContent = f.name; }
+}
+
+async function runMatching() {
+  if (!_matchFile) { toast('Select a ZIP file first', 'error'); return; }
+  const btn = document.getElementById('match-btn'), spin = document.getElementById('match-spin');
+  btn.disabled = true; spin.style.display = 'inline-block';
+  document.getElementById('match-results').style.display = 'none';
+  toast('Running full matching pipeline — this may take several minutes…', 'info');
+  try {
+    const fd = new FormData();
+    fd.append('file', _matchFile);
+    const ids = document.getElementById('match-ids').value.trim();
+    if (ids) fd.append('requirementIds', ids);
+    // Route through gateway: /api/match → Req Analyzer :8081/api/v1/match
+    const r = await fetch(cfg.gw + '/api/match', {
+      method: 'POST', body: fd, signal: AbortSignal.timeout(900000)
+    });
+    const j = await r.json();
+    renderMatchResults(j);
+    toast(r.ok ? 'Matching complete!' : 'Error ' + r.status, r.ok ? 'success' : 'error');
+  } catch(e) {
+    toast('Matching failed: ' + e.message, 'error');
+  }
+  btn.disabled = false; spin.style.display = 'none';
+}
+
+function renderMatchResults(d) {
+  _matchData = d.results || [];
+  const pct = d.coveragePercentage || 0;
+  document.getElementById('cov-pct').textContent = Math.round(pct) + '%';
+  document.getElementById('stat-cov').textContent = Math.round(pct) + '%';
+  document.getElementById('stat-partial').textContent = d.partialCount || 0;
+  document.getElementById('stat-missing').textContent = d.missingCount || 0;
+  // ring: circumference = 2π×48 ≈ 301.59
+  document.getElementById('ring').style.strokeDashoffset = 301.59 * (1 - pct / 100);
+  document.getElementById('m-impl').textContent = d.implementedCount || 0;
+  document.getElementById('m-part').textContent = d.partialCount || 0;
+  document.getElementById('m-miss').textContent = d.missingCount || 0;
+  renderMatchTable(_matchData);
+  document.getElementById('match-results').style.display = 'block';
+  buildReport(d);
+  buildSuggestions(_matchData);
+}
+
+function renderMatchTable(rows) {
+  document.getElementById('match-tbody').innerHTML = rows.map(r => {
+    const sc = r.score || r.matchScore || 0;
+    const pct = Math.round(sc * 100);
+    const sc2 = pct >= 80 ? 'sh' : pct >= 40 ? 'sm' : 'sl';
+    const st = r.status || 'UNKNOWN';
+    const bc = st === 'IMPLEMENTED' ? 'bg' : st === 'PARTIAL' ? 'by' : 'br';
+    const txt = (r.reqText || r.requirementText || '');
+    return `<tr>
+      <td><span class="tx mono tc-m" style="margin-right:8px">${r.reqId || '#'}</span>${txt.substring(0, 90)}${txt.length > 90 ? '…' : ''}</td>
+      <td style="text-align:center"><span class="sp ${sc2}">${pct}%</span></td>
+      <td style="text-align:center"><span class="badge ${bc}">${st}</span></td>
+      <td class="tx tc-m mono">${r.matchedCode || (r.matchedFeatures || []).slice(0,2).join(', ') || '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function filterMatch() {
+  const q = document.getElementById('match-search').value.toLowerCase();
+  const f = document.getElementById('match-filter').value;
+  renderMatchTable(_matchData.filter(r =>
+    (r.reqText || r.requirementText || '').toLowerCase().includes(q) &&
+    (f === 'all' || r.status === f)
+  ));
+}
+
+function exportReport() {
+  const data = {
+    generated: new Date().toISOString(),
+    coverage: document.getElementById('cov-pct').textContent,
+    implemented: document.getElementById('m-impl').textContent,
+    partial: document.getElementById('m-part').textContent,
+    missing: document.getElementById('m-miss').textContent,
+    results: _matchData
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'ezzyhub-report-' + new Date().toISOString().slice(0,10) + '.json';
+  a.click();
+}
+
+function buildReport(d) {
+  document.getElementById('report-content').innerHTML = `
+    <div class="g4 mb2">
+      <div class="mc mc-b"><div class="mc-label">Coverage</div><div class="mc-val">${Math.round(d.coveragePercentage || 0)}%</div></div>
+      <div class="mc mc-g"><div class="mc-label">Implemented</div><div class="mc-val">${d.implementedCount || 0}</div></div>
+      <div class="mc mc-y"><div class="mc-label">Partial</div><div class="mc-val">${d.partialCount || 0}</div></div>
+      <div class="mc mc-r"><div class="mc-label">Missing</div><div class="mc-val">${d.missingCount || 0}</div></div>
+    </div>
+    <div class="card mb2">
+      <div class="f fic fjb mb2"><div class="h2" style="margin:0">Full Report</div>
+      <button class="btn btn-o btn-sm" onclick="exportReport()">Export JSON</button></div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Requirement</th><th>Score</th><th>Status</th><th>Matched Feature</th></tr></thead>
+          <tbody>${(_matchData).map(r => {
+            const pct = Math.round((r.score || 0) * 100);
+            const bc = r.status === 'IMPLEMENTED' ? 'bg' : r.status === 'PARTIAL' ? 'by' : 'br';
+            return `<tr><td><span class="tx mono tc-m">${r.reqId || ''}</span> ${(r.reqText || '').substring(0,80)}</td>
+              <td><span class="sp ${pct>=80?'sh':pct>=40?'sm':'sl'}">${pct}%</span></td>
+              <td><span class="badge ${bc}">${r.status}</span></td>
+              <td class="tx tc-m mono">${r.matchedCode || '—'}</td></tr>`;
+          }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function buildSuggestions(rows) {
+  const need = rows.filter(r => r.status === 'MISSING' || r.status === 'PARTIAL');
+  const card = document.getElementById('suggestions-card');
+  if (!need.length) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  document.getElementById('sugg-content').innerHTML = need.map(r => `
+    <div class="card card-sm mb2">
+      <div class="f fic fjb mb">
+        <div class="f fic g2u">
+          <span class="badge ${r.status === 'MISSING' ? 'br' : 'by'}">${r.status}</span>
+          <span class="ts mono tc-p">${r.reqId || ''}</span>
+        </div>
+        <span class="tx tc-m">${Math.round((r.score || 0) * 100)}% match</span>
+      </div>
+      <div class="ts mb">${(r.reqText || '').substring(0, 120)}</div>
+      <div class="cb tx">// AI suggestion (FR-8): Groq API will generate code here
+// Requirement: ${r.reqId || ''} — ${r.status === 'MISSING' ? 'No matching code found' : 'Partial implementation detected'}
+// The Req Analyzer sends this requirement + project context to the configured AI model
+// and returns an implementation suggestion with explanation.</div>
+    </div>`).join('');
+}
+
+// ── Python NLP ────────────────────────────────────────────────────────────────
+async function nlpPreprocess() {
+  const text = document.getElementById('nlp-pre-text').value.trim();
+  if (!text) { toast('Enter text', 'error'); return; }
+  const spin = document.getElementById('nlp-pre-spin');
+  spin.style.display = 'inline-block';
+  try {
+    const r = await fetch(cfg.gw + '/api/nlp/preprocess', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    });
+    const j = await r.json();
+    document.getElementById('nlp-pre-result').innerHTML = renderNlpResult(j, 'Preprocess');
+    toast(r.ok ? 'Done!' : 'Error ' + r.status, r.ok ? 'success' : 'error');
+  } catch(e) { toast('NLP service unreachable: ' + e.message, 'error'); }
+  spin.style.display = 'none';
+}
+
+async function nlpEmbed() {
+  const text = document.getElementById('nlp-emb-text').value.trim();
+  if (!text) { toast('Enter text', 'error'); return; }
+  const spin = document.getElementById('nlp-emb-spin');
+  spin.style.display = 'inline-block';
+  try {
+    const r = await fetch(cfg.gw + '/api/nlp/preprocess-and-embed', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    });
+    const j = await r.json();
+    const embStr = j.sentence_embedding
+      ? `<div class="mt ts" style="color:var(--success)">SBERT: ✓ ${j.sentence_embedding.length}-dim [${j.sentence_embedding.slice(0,4).map(v=>v.toFixed(4)).join(', ')}, …]</div>`
+      : '';
+    document.getElementById('nlp-emb-result').innerHTML = renderNlpResult(j, 'Embed') + embStr;
+    toast(r.ok ? 'Done!' : 'Error ' + r.status, r.ok ? 'success' : 'error');
+  } catch(e) { toast('NLP service unreachable: ' + e.message, 'error'); }
+  spin.style.display = 'none';
+}
+
+function renderNlpResult(j, title) {
+  return `<div style="margin-top:10px">
+    ${renderTags('Tokens', j.tokens, 'td')}
+    ${renderTags('Keywords', j.keywords, 'tg')}
+    ${renderTags('Action Verbs', j.action_verbs, 'ty')}
+    ${j.warnings?.length ? renderTags('Warnings', j.warnings, 'tr') : ''}
+    ${j.oov_keywords?.length ? renderTags('OOV', j.oov_keywords, 'tr') : ''}
+  </div>`;
+}
+
+// ── API Console ───────────────────────────────────────────────────────────────
+async function apiAnalyze() {
+  const text = document.getElementById('api-req-text').value.trim();
+  if (!text) { toast('Enter requirement text', 'error'); return; }
+  const spin = document.getElementById('api-a-spin'); spin.style.display = 'inline-block';
+  try {
+    const r = await fetch(cfg.gw + '/api/requirements/analyze', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requirementText: text, skipAiValidation: document.getElementById('api-skip').checked })
+    });
+    showResp(await r.json(), r.status, 'POST /api/requirements/analyze');
+    toast(r.ok ? 'Done!' : 'Error ' + r.status, r.ok ? 'success' : 'error');
+  } catch(e) { toast(e.message, 'error'); showRespErr(e.message); }
+  spin.style.display = 'none';
+}
+
+async function apiList() {
+  const spin = document.getElementById('api-l-spin'); spin.style.display = 'inline-block';
+  try {
+    const r = await fetch(cfg.gw + '/api/requirements');
+    const j = await r.json();
+    showResp(j, r.status, 'GET /api/requirements');
+    toast(r.ok ? `${Array.isArray(j) ? j.length : 0} requirements` : 'Error ' + r.status, r.ok ? 'success' : 'error');
+  } catch(e) { toast(e.message, 'error'); showRespErr(e.message); }
+  spin.style.display = 'none';
+}
+
+async function apiHealth() {
+  const spin = document.getElementById('api-h-spin'); spin.style.display = 'inline-block';
+  try {
+    const r = await fetch(cfg.gw + '/api/health');
+    showResp(await r.json(), r.status, 'GET /api/health');
+  } catch(e) { showRespErr(e.message); }
+  spin.style.display = 'none';
+}
+
+async function apiCodeHealth() {
+  const spin = document.getElementById('api-ch-spin'); spin.style.display = 'inline-block';
+  try {
+    const r = await fetch(cfg.gw + '/api/code/health');
+    showResp(await r.json(), r.status, 'GET /api/code/health');
+  } catch(e) { showRespErr(e.message); }
+  spin.style.display = 'none';
+}
+
+function showResp(d, status, ep) {
+  const sc = status < 300 ? 'bg' : status < 500 ? 'by' : 'br';
+  document.getElementById('api-resp').innerHTML =
+    `<div class="f fic fjb mb"><span class="tx mono tc-m">${ep}</span><span class="badge ${sc} tx">HTTP ${status}</span></div>` +
+    `<pre style="white-space:pre-wrap;word-break:break-word">${JSON.stringify(d, null, 2).substring(0, 6000)}</pre>`;
+}
+function showRespErr(msg) {
+  document.getElementById('api-resp').innerHTML =
+    `<div class="tc-e ts">Connection failed: ${msg}</div>`;
+}
+
+
+// ── Sonar Analyzer ───────────────────────────────────────────────────────────
+let _sonarFile = null, _sonarReport = null, _sonarActiveFilter = 'ALL';
+
+function onSonarFile(input) {
+  _sonarFile = input.files[0];
+  if (!_sonarFile) return;
+  document.getElementById('sonar-file-info').style.display = 'flex';
+  document.getElementById('sonar-file-lbl').textContent =
+    _sonarFile.name + ' (' + (_sonarFile.size / 1024 / 1024).toFixed(1) + ' MB)';
+  document.getElementById('sonar-btn').disabled = false;
+  document.getElementById('sonar-dz-lbl').textContent = _sonarFile.name;
+}
+
+function handleSonarDrop(e) {
+  e.preventDefault();
+  document.getElementById('sonar-dz').classList.remove('drag');
+  const f = e.dataTransfer.files[0];
+  if (f && f.name.endsWith('.zip')) { _sonarFile = f; onSonarFile({files:[f]}); }
+}
+
+function setSonarStep(n) {
+  for (let i = 1; i <= 5; i++) {
+    const el = document.getElementById('sonar-step-' + i);
+    if (!el) continue;
+    const dot = el.querySelector('span');
+    if (i < n) {
+      el.className = 'f fic g2u ts'; el.style.color = 'var(--success)';
+      if (dot) dot.style.background = 'var(--success)';
+    } else if (i === n) {
+      el.className = 'f fic g2u ts'; el.style.color = '';
+      if (dot) { dot.style.background = 'var(--primary)'; dot.style.boxShadow = '0 0 0 3px rgba(251,191,36,.15)'; }
+    } else {
+      el.className = 'f fic g2u ts tc-m'; el.style.color = '';
+      if (dot) { dot.style.background = 'var(--muted-fg)'; dot.style.boxShadow = 'none'; }
+    }
+  }
+}
+
+async function runSonarAnalysis() {
+  if (!_sonarFile) { toast('Select a ZIP file first', 'error'); return; }
+  const apiUrl = document.getElementById('sonar-api-url-input').value.trim();
+  const projectName = document.getElementById('sonar-project-name').value.trim();
+  const btn = document.getElementById('sonar-btn'), spin = document.getElementById('sonar-spin');
+  btn.disabled = true; spin.style.display = 'inline-block';
+  document.getElementById('sonar-upload-section').style.display = 'none';
+  document.getElementById('sonar-loading').style.display = 'block';
+  document.getElementById('sonar-results').style.display = 'none';
+  document.getElementById('sonar-error').style.display = 'none';
+  setSonarStep(1);
+
+  const fd = new FormData();
+  fd.append('file', _sonarFile);
+  if (projectName) fd.append('projectName', projectName);
+  setSonarStep(2);
+
+  try {
+    setSonarStep(3);
+    const r = await fetch(apiUrl + '/api/analyze', { method: 'POST', body: fd });
+    setSonarStep(4);
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.error || 'Analysis failed — HTTP ' + r.status);
+    }
+    setSonarStep(5);
+    const report = await r.json();
+    _sonarReport = report;
+    renderSonarReport(report);
+    toast('Sonar analysis complete!', 'success');
+  } catch(e) {
+    document.getElementById('sonar-loading').style.display = 'none';
+    document.getElementById('sonar-upload-section').style.display = 'block';
+    const errBox = document.getElementById('sonar-error');
+    errBox.style.display = 'flex';
+    errBox.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" style="stroke:currentColor;fill:none;stroke-width:2;flex-shrink:0"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> ' + e.message;
+    toast('Sonar analysis failed: ' + e.message, 'error');
+  }
+  btn.disabled = false; spin.style.display = 'none';
+}
+
+function renderSonarReport(r) {
+  const m = {};
+  if (Array.isArray(r.measures)) r.measures.forEach(x => { m[x.metric] = x.value; });
+  r.bugs              = parseInt(m.bugs                    || r.bugs              || 0);
+  r.vulnerabilities   = parseInt(m.vulnerabilities         || r.vulnerabilities   || 0);
+  r.codeSmells        = parseInt(m.code_smells             || r.codeSmells        || 0);
+  r.linesOfCode       = m.ncloc                            || r.linesOfCode       || '—';
+  r.coverage          = m.coverage       != null ? m.coverage       + '%' : (r.coverage       || '—');
+  r.duplications      = m.duplicated_lines_density != null ? m.duplicated_lines_density + '%' : (r.duplications || '—');
+  r.securityHotspots  = parseInt(m.security_hotspots       || r.securityHotspots  || 0);
+  r.qualityGateStatus = m.alert_status                     || r.qualityGateStatus || 'UNKNOWN';
+  document.getElementById('sonar-loading').style.display  = 'none';
+  document.getElementById('sonar-results').style.display  = 'block';
+
+  document.getElementById('sonar-report-title').textContent = r.projectName || r.projectKey || 'Analysis Report';
+  document.getElementById('sonar-report-meta').textContent  =
+    r.analysisDate ? 'Analyzed · ' + new Date(r.analysisDate).toLocaleString() : '';
+
+  // Quality gate badge
+  const qg = document.getElementById('sonar-quality-gate');
+  const qgStatus = (r.qualityGateStatus || 'UNKNOWN').toUpperCase();
+  const qgClass = qgStatus === 'OK' ? 'bg' : qgStatus === 'ERROR' ? 'br' : qgStatus === 'WARN' ? 'by' : 'bi';
+  qg.className = 'badge ' + qgClass;
+  qg.textContent = '● Quality Gate: ' + qgStatus;
+
+  // Metrics
+  const metrics = [
+    { label: 'Total Issues',    value: r.totalIssues       ?? 0,   cls: 'mc-r' },
+    { label: 'Bugs',            value: r.bugs              ?? 0,   cls: 'mc-r' },
+    { label: 'Vulnerabilities', value: r.vulnerabilities   ?? 0,   cls: 'mc-y' },
+    { label: 'Code Smells',     value: r.codeSmells        ?? 0,   cls: 'mc' },
+    { label: 'Lines of Code',   value: r.linesOfCode       ?? '—', cls: 'mc-b' },
+    { label: 'Coverage',        value: r.coverage          ?? '—', cls: 'mc-g' },
+    { label: 'Duplications',    value: r.duplications      ?? '—', cls: 'mc' },
+    { label: 'Hotspots',        value: r.securityHotspots  ?? 0,   cls: 'mc-y' },
+  ];
+  document.getElementById('sonar-metrics-grid').innerHTML = metrics.map(m =>
+    `<div class="mc ${m.cls}"><div class="mc-label">${m.label}</div><div class="mc-val">${m.value}</div></div>`
+  ).join('');
+
+  // Severity pills
+  const sevColors = { BLOCKER:'br', CRITICAL:'by', MAJOR:'by', MINOR:'bi', INFO:'bi' };
+  const sevs = [
+    { key:'BLOCKER', count: r.blocker }, { key:'CRITICAL', count: r.critical },
+    { key:'MAJOR',   count: r.major   }, { key:'MINOR',    count: r.minor   },
+    { key:'INFO',    count: r.info    },
+  ].filter(s => s.count > 0);
+  document.getElementById('sonar-severity-bar').innerHTML = sevs.map(s =>
+    `<span class="badge ${sevColors[s.key] || 'bi'}">● ${s.key} <strong>${s.count}</strong></span>`
+  ).join('');
+
+  // Filter buttons
+  const types = ['ALL','BUG','VULNERABILITY','CODE_SMELL'];
+  document.getElementById('sonar-filter-bar').innerHTML = types.map(t =>
+    `<button class="btn btn-o btn-sm ${t === 'ALL' ? 'btn-p' : ''}" id="sonar-fb-${t}" onclick="sonarFilter('${t}', this)">${t.replace('_',' ')}</button>`
+  ).join('');
+
+  renderSonarIssues(r.issuesByFile, 'ALL');
+}
+
+function sonarFilter(type, btn) {
+  _sonarActiveFilter = type;
+  document.querySelectorAll('[id^="sonar-fb-"]').forEach(b => { b.className = 'btn btn-o btn-sm'; });
+  btn.className = 'btn btn-p btn-sm';
+  const filtered = {};
+  if (_sonarReport && _sonarReport.issuesByFile) {
+    for (const [file, issues] of Object.entries(_sonarReport.issuesByFile)) {
+      const fi = type === 'ALL' ? issues : issues.filter(i => i.type === type);
+      if (fi.length > 0) filtered[file] = fi;
+    }
+  }
+  renderSonarIssues(filtered, type);
+}
+
+function renderSonarIssues(byFile, filter) {
+  const container = document.getElementById('sonar-issues-container');
+  const title     = document.getElementById('sonar-files-title');
+  if (!byFile || Object.keys(byFile).length === 0) {
+    title.textContent = '';
+    container.innerHTML = `<div class="card" style="text-align:center;padding:2rem;color:var(--muted-fg)">No issues found${filter !== 'ALL' ? ' for this type' : ''}</div>`;
+    return;
+  }
+  const fileCount  = Object.keys(byFile).length;
+  const issueCount = Object.values(byFile).reduce((a, b) => a + b.length, 0);
+  title.textContent = issueCount + ' issues across ' + fileCount + ' files';
+
+  const sevCls = { BLOCKER:'br', CRITICAL:'by', MAJOR:'by', MINOR:'bi', INFO:'bi' };
+  const sorted = Object.entries(byFile).sort((a, b) => b[1].length - a[1].length);
+  container.innerHTML = sorted.map(([file, issues], idx) => {
+    const topSev = (['BLOCKER','CRITICAL','MAJOR','MINOR','INFO']).find(s => issues.some(i => i.severity === s)) || 'INFO';
+    return `<div class="card mb" style="padding:0;overflow:hidden" id="sonar-fg-${idx}">
+      <div class="f fic fjb" style="padding:10px 14px;cursor:pointer;background:var(--card)" onclick="this.parentElement.classList.toggle('open');this.nextElementSibling.style.display=this.parentElement.classList.contains('open')?'block':'none'">
+        <span style="font-family:var(--mono);font-size:12px">${file || 'Unknown file'}</span>
+        <div class="f fic g2u">
+          <span class="badge ${sevCls[topSev]||'bi'} tx">${topSev}</span>
+          <span class="badge bi tx">${issues.length} issue${issues.length!==1?'s':''}</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" style="stroke:var(--muted-fg);fill:none;stroke-width:2;transition:transform .2s" class="sonar-chev"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+      </div>
+      <div style="display:none;border-top:1px solid var(--border)">
+        <div class="f" style="padding:8px 14px;background:#111;font-size:11px;font-family:var(--mono);color:var(--muted-fg);font-weight:600;letter-spacing:.06em;border-bottom:1px solid var(--border)">
+          <span style="width:100px">SEVERITY</span><span style="width:110px">TYPE</span><span style="flex:1">MESSAGE</span><span style="width:60px">LINE</span><span style="width:64px;text-align:right">EFFORT</span>
+        </div>
+        ${issues.map(issue => `
+        <div class="f" style="padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.03);font-size:13px;align-items:start;gap:12px">
+          <span style="width:100px;flex-shrink:0"><span class="badge ${sevCls[issue.severity]||'bi'} tx">${issue.severity||'?'}</span></span>
+          <span style="width:110px;flex-shrink:0"><span class="badge bi tx">${issue.type||'—'}</span></span>
+          <span style="flex:1;line-height:1.4">${(issue.message||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</span>
+          <span style="width:60px;flex-shrink:0;font-family:var(--mono);font-size:12px;color:var(--muted-fg)">${issue.line?'L'+issue.line:'—'}</span>
+          <span style="width:64px;flex-shrink:0;font-family:var(--mono);font-size:12px;color:var(--muted-fg);text-align:right">${issue.effort||issue.debt||'—'}</span>
+        </div>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function sonarDownloadJSON() {
+  if (!_sonarReport) return;
+  const name = (_sonarReport.projectName || _sonarReport.projectKey || 'sonar-report').replace(/[^a-z0-9_\-]/gi,'_');
+  const blob = new Blob([JSON.stringify(_sonarReport, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name + '_sonar_analysis.json';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+}
+
+function resetSonarAnalysis() {
+  _sonarFile = null; _sonarReport = null;
+  document.getElementById('sonar-results').style.display = 'none';
+  document.getElementById('sonar-upload-section').style.display = 'block';
+  document.getElementById('sonar-file-info').style.display = 'none';
+  document.getElementById('sonar-fi-input').value = '';
+  document.getElementById('sonar-btn').disabled = true;
+  document.getElementById('sonar-dz-lbl').textContent = 'Drop ZIP here or click to browse';
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+loadCfg();
+checkAll();
+setInterval(checkAll, 30000);
+</script>
+</body>
+</html>

@@ -1,0 +1,759 @@
+{
+  "info": {
+    "name": "EzzyHub — Full GP Test Suite",
+    "_postman_id": "ezzyhub-gp-2026",
+    "description": "Complete test collection for the EzzyHub Graduation Project.\n\nServices covered:\n• Requirement Analyzer  → http://localhost:8081\n• Code Analyzer         → http://localhost:8080\n• Python NLP Service    → http://localhost:8000\n\nRun order: Health Checks → Requirement Analyzer → Python NLP → Code Analyzer → Matching",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "req_analyzer_url", "value": "http://localhost:8081", "type": "string" },
+    { "key": "code_analyzer_url", "value": "http://localhost:8080", "type": "string" },
+    { "key": "python_nlp_url",    "value": "http://localhost:8000", "type": "string" }
+  ],
+  "item": [
+
+    {
+      "name": "🟢 0 — Health Checks (run first)",
+      "item": [
+        {
+          "name": "0.1 Requirement Analyzer — Health",
+          "request": {
+            "method": "GET",
+            "url": "{{req_analyzer_url}}/api/v1/requirements/health",
+            "description": "Verifies the Requirement Analyzer (port 8081) is running."
+          },
+          "response": [],
+          "_postman_response_example": {
+            "status": "200 OK",
+            "body": "{ \"status\": \"UP\", \"module\": \"Requirement Analyzer\", \"version\": \"2.0.0\" }"
+          }
+        },
+        {
+          "name": "0.2 Code Analyzer — Health",
+          "request": {
+            "method": "GET",
+            "url": "{{code_analyzer_url}}/api/v1/health",
+            "description": "Verifies the Code Analyzer (port 8080) is running and LLM is configured."
+          },
+          "response": [],
+          "_postman_response_example": {
+            "status": "200 OK",
+            "body": "{ \"status\": \"UP\", \"service\": \"code-analyzer\", \"version\": \"1.0.0\", \"llmProvider\": \"gemini\", \"llmModel\": \"gemini-1.5-flash\", \"llmConfigured\": true, \"limits\": { \"maxZipSizeMB\": 500, \"maxFilesForLLM\": 60, \"maxDeepFiles\": 25, \"maxCharsPerFile\": 4000 } }"
+          }
+        },
+        {
+          "name": "0.3 Code Analyzer — Info",
+          "request": {
+            "method": "GET",
+            "url": "{{code_analyzer_url}}/api/v1/info",
+            "description": "Returns API metadata for the Code Analyzer."
+          },
+          "response": []
+        },
+        {
+          "name": "0.4 Python NLP — Health",
+          "request": {
+            "method": "GET",
+            "url": "{{python_nlp_url}}/health",
+            "description": "Verifies Python NLP service (port 8000) is up and both SBERT + Word2Vec models are loaded."
+          },
+          "response": [],
+          "_postman_response_example": {
+            "status": "200 OK",
+            "body": "{ \"status\": \"UP\", \"version\": \"1.1.0\", \"sbert_loaded\": true, \"word2vec_loaded\": true, \"note\": null }"
+          }
+        },
+        {
+          "name": "0.5 Requirement Analyzer — Swagger UI",
+          "request": {
+            "method": "GET",
+            "url": "{{req_analyzer_url}}/swagger-ui.html",
+            "description": "Opens interactive Swagger docs for the Requirement Analyzer."
+          },
+          "response": []
+        },
+        {
+          "name": "0.6 Code Analyzer — Swagger UI",
+          "request": {
+            "method": "GET",
+            "url": "{{code_analyzer_url}}/swagger-ui.html",
+            "description": "Opens interactive Swagger docs for the Code Analyzer."
+          },
+          "response": []
+        }
+      ]
+    },
+
+    {
+      "name": "📋 1 — Requirement Analyzer (port 8081)",
+      "item": [
+
+        {
+          "name": "1.1 Analyze Single Requirement — User Registration (FR-1.1.1)",
+          "request": {
+            "method": "POST",
+            "url": "{{req_analyzer_url}}/api/v1/requirements/analyze",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirementText\": \"FR-1.1.1: The system shall allow a new user to create an account using username, email, and password.\",\n  \"skipAiValidation\": false\n}"
+            },
+            "description": "Runs the full 13-step NLP pipeline on FR-1.1.1.\n\nExpected: 201 Created (first time) or 200 OK (if re-running).\nStatus field should be VALID.\nKeywords should include: user, create, account, username, email, password."
+          },
+          "response": [],
+          "_postman_response_example": {
+            "status": "201 Created",
+            "body": "{ \"status\": \"VALID\", \"reqId\": \"FR-1.1.1\", \"reqText\": \"The system shall allow a new user to create an account using username, email, and password.\", \"tokens\": [\"user\", \"create\", \"account\", \"username\", \"email\", \"password\"], \"keywords\": [\"user\", \"create\", \"account\", \"username\", \"email\", \"password\", \"member\", \"add\", \"insert\"], \"actionVerbs\": [\"allow\", \"create\"], \"sentenceEmbedding\": [0.023, -0.156, \"...(384 floats)\"], \"wordEmbeddings\": { \"user\": [0.12, -0.34, \"...(300 floats)\"] }, \"wasUpdated\": false }"
+          }
+        },
+
+        {
+          "name": "1.2 Analyze Single Requirement — User Login (FR-1.2.1)",
+          "request": {
+            "method": "POST",
+            "url": "{{req_analyzer_url}}/api/v1/requirements/analyze",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirementText\": \"FR-1.2.1: The system shall allow registered users to log in using valid credentials.\",\n  \"skipAiValidation\": false\n}"
+            },
+            "description": "Tests login requirement — 'log in' is a phrasal verb that should be normalized to 'login'."
+          },
+          "response": []
+        },
+
+        {
+          "name": "1.3 Analyze Single Requirement — Deny Invalid Login (FR-1.2.2)",
+          "request": {
+            "method": "POST",
+            "url": "{{req_analyzer_url}}/api/v1/requirements/analyze",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirementText\": \"FR-1.2.2: The system shall deny access if credentials are incorrect.\",\n  \"skipAiValidation\": false\n}"
+            },
+            "description": "Tests negative requirement (deny/block). Action verb 'deny' should appear in actionVerbs."
+          },
+          "response": []
+        },
+
+        {
+          "name": "1.4 Analyze Single Requirement — GitHub Import (FR-2.1.1)",
+          "request": {
+            "method": "POST",
+            "url": "{{req_analyzer_url}}/api/v1/requirements/analyze",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirementText\": \"FR-2.1.1: The system shall allow users to import source code from GitHub repositories.\",\n  \"skipAiValidation\": false\n}"
+            },
+            "description": "Tests synonym expansion: 'import' should expand to [upload, download, load, fetch, pull]."
+          },
+          "response": []
+        },
+
+        {
+          "name": "1.5 Analyze Single Requirement — Skip AI Validation",
+          "request": {
+            "method": "POST",
+            "url": "{{req_analyzer_url}}/api/v1/requirements/analyze",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirementText\": \"FR-7.1.2: The system shall calculate a similarity score using the Jaccard similarity algorithm.\",\n  \"skipAiValidation\": true\n}"
+            },
+            "description": "skipAiValidation=true — skips Groq API call. Faster, no AI cost. Useful when Groq key is not set."
+          },
+          "response": []
+        },
+
+        {
+          "name": "1.6 Analyze — INVALID: Too Short (< 5 words)",
+          "request": {
+            "method": "POST",
+            "url": "{{req_analyzer_url}}/api/v1/requirements/analyze",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirementText\": \"Login users\",\n  \"skipAiValidation\": true\n}"
+            },
+            "description": "Tests FR-3.3.1 validation: requirement text is too short (< 5 words).\n\nExpected: status = INVALID, error message about minimum word count."
+          },
+          "response": [],
+          "_postman_response_example": {
+            "status": "400 or 200 with INVALID status",
+            "body": "{ \"status\": \"INVALID\", \"errorMessage\": \"Requirement is too short (minimum 5 words)\" }"
+          }
+        },
+
+        {
+          "name": "1.7 Analyze — INVALID: Blank Text",
+          "request": {
+            "method": "POST",
+            "url": "{{req_analyzer_url}}/api/v1/requirements/analyze",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirementText\": \"\",\n  \"skipAiValidation\": true\n}"
+            },
+            "description": "Tests @NotBlank validation.\n\nExpected: 400 Bad Request with validation error."
+          },
+          "response": [],
+          "_postman_response_example": {
+            "status": "400 Bad Request",
+            "body": "{ \"status\": 400, \"error\": \"Requirement text must not be blank\" }"
+          }
+        },
+
+        {
+          "name": "1.8 Analyze — Duplicate Requirement (Update Path)",
+          "request": {
+            "method": "POST",
+            "url": "{{req_analyzer_url}}/api/v1/requirements/analyze",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirementText\": \"FR-1.1.1: The system shall allow a new user to create an account using username, email, and password.\",\n  \"skipAiValidation\": true\n}"
+            },
+            "description": "Re-submits FR-1.1.1 (same ID as request 1.1). Tests Issue #12 fix.\n\nExpected: 200 OK (not 201), wasUpdated = true."
+          },
+          "response": [],
+          "_postman_response_example": {
+            "status": "200 OK",
+            "body": "{ \"status\": \"VALID\", \"reqId\": \"FR-1.1.1\", \"wasUpdated\": true }"
+          }
+        },
+
+        {
+          "name": "1.9 Analyze — Auto ID Generation (No ID prefix)",
+          "request": {
+            "method": "POST",
+            "url": "{{req_analyzer_url}}/api/v1/requirements/analyze",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirementText\": \"The system shall generate a comprehensive verification report combining all analysis results.\",\n  \"skipAiValidation\": true\n}"
+            },
+            "description": "No ID prefix in text → system auto-generates REQ-AUTO-N.\n\nExpected: reqId = 'REQ-AUTO-1' (or next auto number)."
+          },
+          "response": []
+        },
+
+        {
+          "name": "1.10 Batch Analyze — FR-3 Requirements (with AI)",
+          "request": {
+            "method": "POST",
+            "url": "{{req_analyzer_url}}/api/v1/requirements/analyze/batch",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirements\": [\n    \"FR-3.1.1: The system shall accept between 1 and 100 functional requirements.\",\n    \"FR-3.2.1: The system shall remove stop words from requirement text.\",\n    \"FR-3.2.2: The system shall identify technical terms in requirements.\",\n    \"FR-3.3.1: The system shall check that each requirement has a minimum length of five words.\",\n    \"FR-3.3.2: The system shall warn the user if no action verbs are detected.\"\n  ],\n  \"skipAiValidation\": false\n}"
+            },
+            "description": "Batch-processes 5 requirements from FR-3.\n\nExpected: Array of 5 AnalysisResult objects, each with status VALID."
+          },
+          "response": []
+        },
+
+        {
+          "name": "1.11 Batch Analyze — Skip AI (Save Groq Cost)",
+          "request": {
+            "method": "POST",
+            "url": "{{req_analyzer_url}}/api/v1/requirements/analyze/batch",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirements\": [\n    \"FR-7.1.1: The system shall compare requirement keywords against code feature keywords.\",\n    \"FR-7.1.2: The system shall calculate a similarity score using Jaccard similarity algorithm.\",\n    \"FR-7.2.1: The system shall classify requirements as IMPLEMENTED, PARTIAL, or MISSING.\",\n    \"FR-7.3.1: The system shall count requirements by status: implemented, partial, and missing.\",\n    \"FR-7.3.2: The system shall calculate coverage percentage as implemented divided by total.\",\n    \"FR-8.1.1: The system shall send missing requirement text to the AI API with project context.\",\n    \"FR-10.1: The system shall generate a comprehensive verification report combining all analysis results.\"\n  ],\n  \"skipAiValidation\": true\n}"
+            },
+            "description": "Batch with skipAiValidation=true — no Groq API calls, processes 7 requirements at once.\n\nExpected: Array of 7 results, all VALID."
+          },
+          "response": []
+        },
+
+        {
+          "name": "1.12 GET All Requirements (Summary — No Blobs)",
+          "request": {
+            "method": "GET",
+            "url": "{{req_analyzer_url}}/api/v1/requirements",
+            "description": "Lists all analyzed requirements stored in MySQL.\nReturns RequirementSummaryDto — no embedding blobs (Issue #14 fix).\n\nExpected: Array of requirement summaries with id, reqId, reqText, status, keywords, actionVerbs."
+          },
+          "response": [],
+          "_postman_response_example": {
+            "status": "200 OK",
+            "body": "[ { \"id\": 1, \"reqId\": \"FR-1.1.1\", \"reqText\": \"The system shall allow...\", \"status\": \"VALID\", \"keywords\": [\"user\",\"create\",\"account\"], \"actionVerbs\": [\"allow\",\"create\"], \"createdAt\": \"2026-05-17T07:00:00Z\" } ]"
+          }
+        },
+
+        {
+          "name": "1.13 GET Requirement by ID — FR-1.1.1",
+          "request": {
+            "method": "GET",
+            "url": "{{req_analyzer_url}}/api/v1/requirements/FR-1.1.1",
+            "description": "Fetches a single requirement by its reqId.\n\nExpected: 200 OK with RequirementSummaryDto.\nIf not found: 404 Not Found."
+          },
+          "response": []
+        },
+
+        {
+          "name": "1.14 GET Requirement by ID — Not Found",
+          "request": {
+            "method": "GET",
+            "url": "{{req_analyzer_url}}/api/v1/requirements/FR-DOES-NOT-EXIST",
+            "description": "Tests 404 path.\n\nExpected: 404 Not Found."
+          },
+          "response": []
+        },
+
+        {
+          "name": "1.15 DELETE Requirement by DB ID",
+          "request": {
+            "method": "DELETE",
+            "url": "{{req_analyzer_url}}/api/v1/requirements/999",
+            "description": "Deletes requirement with database primary key 999.\nChange 999 to a real DB ID from the GET /requirements response.\n\nExpected: 200 OK with { message: 'Requirement deleted', id: '999' }"
+          },
+          "response": []
+        },
+
+        {
+          "name": "1.16 OpenAPI Spec — Requirement Analyzer",
+          "request": {
+            "method": "GET",
+            "url": "{{req_analyzer_url}}/api-docs",
+            "description": "Returns the full OpenAPI JSON spec for the Requirement Analyzer."
+          },
+          "response": []
+        }
+      ]
+    },
+
+    {
+      "name": "🐍 2 — Python NLP Service (port 8000)",
+      "item": [
+
+        {
+          "name": "2.1 Preprocess — Login Requirement",
+          "request": {
+            "method": "POST",
+            "url": "{{python_nlp_url}}/preprocess",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"The system shall allow registered users to log in using valid credentials.\"\n}"
+            },
+            "description": "Tests Phase 2+3 NLP pipeline.\n\nExpected:\n- 'log in' normalized → 'login' (phrasal verb fix)\n- tokens: [user, register, login, valid, credential]\n- action_verbs: [allow, login]\n- keywords expanded with synonyms: [authenticate, signin, access]"
+          },
+          "response": [],
+          "_postman_response_example": {
+            "status": "200 OK",
+            "body": "{ \"tokens\": [\"user\", \"login\", \"valid\", \"credential\"], \"keywords\": [\"user\", \"login\", \"authenticate\", \"signin\", \"credential\", \"member\"], \"action_verbs\": [\"allow\", \"login\"], \"warnings\": [] }"
+          }
+        },
+
+        {
+          "name": "2.2 Preprocess — Registration Requirement",
+          "request": {
+            "method": "POST",
+            "url": "{{python_nlp_url}}/preprocess",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"The system shall allow a new user to create an account using username, email, and password.\"\n}"
+            },
+            "description": "Tests synonym expansion:\n- 'create' → [add, insert, generate, post]\n- 'user' → [member, account, customer, client, profile]"
+          },
+          "response": []
+        },
+
+        {
+          "name": "2.3 Preprocess — Short Text (Warning Expected)",
+          "request": {
+            "method": "POST",
+            "url": "{{python_nlp_url}}/preprocess",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Validate user input fields\"\n}"
+            },
+            "description": "Short text, may trigger 'No action verbs detected' warning.\n\nExpected: warnings array contains a warning message."
+          },
+          "response": []
+        },
+
+        {
+          "name": "2.4 Preprocess — Blank Text (Error)",
+          "request": {
+            "method": "POST",
+            "url": "{{python_nlp_url}}/preprocess",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"\"\n}"
+            },
+            "description": "Tests 422 validation.\n\nExpected: 422 Unprocessable Entity — 'text must not be blank'."
+          },
+          "response": []
+        },
+
+        {
+          "name": "2.5 Embed — Sentence + Keywords",
+          "request": {
+            "method": "POST",
+            "url": "{{python_nlp_url}}/embed",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sentence\": \"The system shall allow users to register with email and password.\",\n  \"keywords\": [\"user\", \"register\", \"email\", \"password\", \"create\", \"account\"]\n}"
+            },
+            "description": "Tests Phase 4 embedding.\n\nExpected:\n- sentence_embedding: array of 384 floats (SBERT)\n- word_embeddings: 6 keywords each with 300-float Word2Vec vector\n- oov_keywords: any keywords not found in Word2Vec vocab"
+          },
+          "response": [],
+          "_postman_response_example": {
+            "status": "200 OK",
+            "body": "{ \"sentence_embedding\": [0.023, -0.156, \"...(384 floats total)\"], \"word_embeddings\": { \"user\": [0.12, -0.34, \"...(300 floats)\"], \"register\": [0.45, 0.67, \"...(300 floats)\"] }, \"oov_keywords\": [] }"
+          }
+        },
+
+        {
+          "name": "2.6 Embed — OOV Keywords Test",
+          "request": {
+            "method": "POST",
+            "url": "{{python_nlp_url}}/embed",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sentence\": \"The microservice uses gRPC and protobufs for inter-service communication.\",\n  \"keywords\": [\"microservice\", \"grpc\", \"protobuf\", \"xyznonexistentword123\"]\n}"
+            },
+            "description": "Tests OOV (out-of-vocabulary) handling.\nKeywords not in Word2Vec vocab return zero vectors and appear in oov_keywords list.\n\nExpected: oov_keywords contains at least 'xyznonexistentword123'."
+          },
+          "response": []
+        },
+
+        {
+          "name": "2.7 Preprocess-and-Embed (Combined — FR BUG-3 Fix)",
+          "request": {
+            "method": "POST",
+            "url": "{{python_nlp_url}}/preprocess-and-embed",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"The system shall allow registered users to log in using valid credentials.\"\n}"
+            },
+            "description": "Combined endpoint (BUG-3 fix): does NLP + embedding in ONE HTTP call instead of two.\nCuts HTTP calls in half for large projects.\n\nExpected: Full NLP output (tokens, keywords, action_verbs, warnings) + full embedding output (sentence_embedding, word_embeddings, oov_keywords)."
+          },
+          "response": [],
+          "_postman_response_example": {
+            "status": "200 OK",
+            "body": "{ \"tokens\": [\"user\", \"login\", \"valid\", \"credential\"], \"keywords\": [\"user\", \"login\", \"authenticate\"], \"action_verbs\": [\"allow\", \"login\"], \"warnings\": [], \"sentence_embedding\": [0.023, -0.156, \"...(384 floats)\"], \"word_embeddings\": { \"user\": [0.12, \"...(300 floats)\"] }, \"oov_keywords\": [] }"
+          }
+        },
+
+        {
+          "name": "2.8 Preprocess-and-Embed — Code Feature Text",
+          "request": {
+            "method": "POST",
+            "url": "{{python_nlp_url}}/preprocess-and-embed",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"UserController.register — handles new user registration via POST /api/users/register, validates email format and stores hashed password\"\n}"
+            },
+            "description": "Simulates processing a code feature description (as the matching service does).\n\nExpected: keywords include [user, register, email, password, store, validate, hash]."
+          },
+          "response": []
+        }
+      ]
+    },
+
+    {
+      "name": "☕ 3 — Code Analyzer (port 8080)",
+      "item": [
+
+        {
+          "name": "3.1 Analyze ZIP — Upload Project",
+          "request": {
+            "method": "POST",
+            "url": "{{code_analyzer_url}}/api/v1/analyze",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "",
+                  "description": "Select your project ZIP file here in Postman"
+                }
+              ]
+            },
+            "description": "Main Code Analyzer endpoint.\nUploads a ZIP file → runs 2-pass LLM analysis.\n\nPass 1: Full project semantic overview (architecture, stack, patterns).\nPass 2: Deep per-file, per-class, per-method breakdown.\n\nExpected response: AnalysisResult JSON with structure + semanticAnalysis + fileAnalyses.\n\n⚠️ Takes 30–120 seconds for large projects.\n⚠️ Requires LLM API key configured in backend/.env"
+          },
+          "response": [],
+          "_postman_response_example": {
+            "status": "200 OK",
+            "body": "{ \"id\": \"uuid-here\", \"status\": \"success\", \"projectName\": \"my-project\", \"processingTimeMs\": 14230, \"llmProvider\": \"gemini\", \"llmModel\": \"gemini-1.5-flash\", \"structure\": { \"stats\": { \"totalFiles\": 45, \"totalDirectories\": 12, \"languageDistribution\": { \"Java\": 35, \"YAML\": 5 } }, \"entryPoints\": [\"src/main/java/com/app/Application.java\"] }, \"semanticAnalysis\": { \"projectType\": \"REST API Microservice\", \"architecturePattern\": \"Layered Architecture\", \"technicalStack\": \"Java, Spring Boot, MySQL\", \"designPatterns\": [\"Repository\", \"Service\", \"Controller\"] }, \"fileAnalyses\": [ { \"filePath\": \"src/main/java/.../UserController.java\", \"fileRole\": \"Handles user registration and login REST endpoints\", \"classes\": [ { \"name\": \"UserController\", \"methods\": [ { \"name\": \"register\", \"purpose\": \"Creates new user account\" } ] } ] } ] }"
+          }
+        },
+
+        {
+          "name": "3.2 Analyze ZIP — Error: No File Sent",
+          "request": {
+            "method": "POST",
+            "url": "{{code_analyzer_url}}/api/v1/analyze",
+            "body": {
+              "mode": "formdata",
+              "formdata": []
+            },
+            "description": "Tests error handling when no file is provided.\n\nExpected: 400 Bad Request."
+          },
+          "response": []
+        },
+
+        {
+          "name": "3.3 Code Analyzer — OpenAPI Spec",
+          "request": {
+            "method": "GET",
+            "url": "{{code_analyzer_url}}/api-docs",
+            "description": "Returns the full OpenAPI JSON spec for the Code Analyzer."
+          },
+          "response": []
+        },
+
+        {
+          "name": "3.4 Code Analyzer — Actuator Metrics",
+          "request": {
+            "method": "GET",
+            "url": "{{code_analyzer_url}}/actuator",
+            "description": "Lists all available actuator endpoints."
+          },
+          "response": []
+        },
+
+        {
+          "name": "3.5 Code Analyzer — Actuator Health (Detailed)",
+          "request": {
+            "method": "GET",
+            "url": "{{code_analyzer_url}}/actuator/health",
+            "description": "Spring Actuator health with full details (disk space, DB, etc)."
+          },
+          "response": []
+        }
+      ]
+    },
+
+    {
+      "name": "🔗 4 — Matching Stage — POST /api/v1/match (port 8081)",
+      "item": [
+
+        {
+          "name": "4.1 Match — All Stored Requirements vs ZIP",
+          "request": {
+            "method": "POST",
+            "url": "{{req_analyzer_url}}/api/v1/match",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "",
+                  "description": "Upload the project ZIP to match against requirements"
+                }
+              ]
+            },
+            "description": "The MAIN integration endpoint — runs the full matching pipeline:\n1. Loads ALL requirements from MySQL\n2. Sends ZIP to Code Analyzer (port 8080)\n3. NLP-processes each code feature via Python (port 8000)\n4. Computes weighted Jaccard (35%) + cosine similarity (65%) per requirement\n5. Classifies each: IMPLEMENTED (≥0.80) / PARTIAL (0.40-0.79) / MISSING (<0.40)\n6. Returns MatchReport with coverage %\n\n⚠️ All 3 services must be running before calling this.\n⚠️ Requires requirements to be pre-loaded via Section 1 endpoints."
+          },
+          "response": [],
+          "_postman_response_example": {
+            "status": "200 OK",
+            "body": "{ \"projectName\": \"my-project\", \"timestamp\": \"2026-05-17T08:00:00Z\", \"processingTimeMs\": 18500, \"totalRequirements\": 10, \"implementedCount\": 6, \"partialCount\": 3, \"missingCount\": 1, \"coveragePercentage\": 60.0, \"totalSourceFiles\": 45, \"analyzedFileCount\": 25, \"codeFeatureCount\": 120, \"llmProvider\": \"gemini\", \"status\": \"success\", \"results\": [ { \"requirementId\": \"FR-1.1.1\", \"requirementText\": \"The system shall allow a new user to create an account...\", \"score\": 0.87, \"status\": \"IMPLEMENTED\", \"jaccardScore\": 0.72, \"cosineScore\": 0.95, \"matchedFilePath\": \"src/main/java/UserController.java\", \"matchedMethodName\": \"register\", \"matchedSemanticText\": \"Handles new user registration\" }, { \"requirementId\": \"FR-7.1.2\", \"requirementText\": \"The system shall calculate similarity score...\", \"score\": 0.55, \"status\": \"PARTIAL\", \"jaccardScore\": 0.40, \"cosineScore\": 0.63 }, { \"requirementId\": \"FR-8.1.1\", \"requirementText\": \"System sends requirement to AI API...\", \"score\": 0.21, \"status\": \"MISSING\" } ] }"
+          }
+        },
+
+        {
+          "name": "4.2 Match — Specific Requirement IDs Only",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{req_analyzer_url}}/api/v1/match?requirementIds=FR-1.1.1,FR-1.2.1,FR-2.1.1",
+              "host": ["{{req_analyzer_url}}"],
+              "path": ["api", "v1", "match"],
+              "query": [
+                {
+                  "key": "requirementIds",
+                  "value": "FR-1.1.1,FR-1.2.1,FR-2.1.1",
+                  "description": "Comma-separated list of requirement IDs to match"
+                }
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "",
+                  "description": "Upload project ZIP"
+                }
+              ]
+            },
+            "description": "Matches only 3 specific requirements instead of all.\nUseful for targeted testing of specific FRs.\n\nExpected: MatchReport with totalRequirements=3."
+          },
+          "response": []
+        },
+
+        {
+          "name": "4.3 Match — Error: No File",
+          "request": {
+            "method": "POST",
+            "url": "{{req_analyzer_url}}/api/v1/match",
+            "body": {
+              "mode": "formdata",
+              "formdata": []
+            },
+            "description": "Tests error when no file is provided.\n\nExpected: 400 Bad Request — 'No file provided or file is empty'."
+          },
+          "response": []
+        },
+
+        {
+          "name": "4.4 Match — Error: Non-ZIP File",
+          "request": {
+            "method": "POST",
+            "url": "{{req_analyzer_url}}/api/v1/match",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "",
+                  "description": "Upload any non-ZIP file (e.g. a .txt or .pdf)"
+                }
+              ]
+            },
+            "description": "Tests file type validation.\n\nExpected: 400 Bad Request — 'Only ZIP files are supported'."
+          },
+          "response": []
+        }
+      ]
+    },
+
+    {
+      "name": "🔄 5 — End-to-End Demo Flow (Run in Order)",
+      "item": [
+
+        {
+          "name": "5.1 [STEP 1] Health Check All Services",
+          "request": {
+            "method": "GET",
+            "url": "{{req_analyzer_url}}/api/v1/requirements/health",
+            "description": "Confirm Requirement Analyzer is up."
+          },
+          "response": []
+        },
+
+        {
+          "name": "5.2 [STEP 2] Load FR-1 Requirements (Batch, Skip AI)",
+          "request": {
+            "method": "POST",
+            "url": "{{req_analyzer_url}}/api/v1/requirements/analyze/batch",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirements\": [\n    \"FR-1.1.1: The system shall allow a new user to create an account using username, email, and password.\",\n    \"FR-1.1.2: The system shall validate user input including required fields and valid email format.\",\n    \"FR-1.1.3: The system shall prevent registration using an already existing email or username.\",\n    \"FR-1.1.4: The system shall securely store user credentials after successful registration.\",\n    \"FR-1.2.1: The system shall allow registered users to log in using valid credentials.\",\n    \"FR-1.2.2: The system shall deny access if credentials are incorrect.\",\n    \"FR-1.2.3: The system shall display an appropriate error message for invalid login attempts.\"\n  ],\n  \"skipAiValidation\": true\n}"
+            },
+            "description": "Loads all FR-1 requirements into MySQL in one batch."
+          },
+          "response": []
+        },
+
+        {
+          "name": "5.3 [STEP 3] Load FR-2 + FR-4 Requirements (Batch, Skip AI)",
+          "request": {
+            "method": "POST",
+            "url": "{{req_analyzer_url}}/api/v1/requirements/analyze/batch",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirements\": [\n    \"FR-2.1.1: The system shall allow users to import source code from GitHub repositories.\",\n    \"FR-2.1.4: The system shall download repository contents as a ZIP file.\",\n    \"FR-2.2.1: The system shall allow users to upload ZIP files containing source code.\",\n    \"FR-2.2.2: The system shall accept ZIP files up to 50 megabytes in size.\",\n    \"FR-4.1.1: The system shall parse all Java source files in the uploaded project.\",\n    \"FR-4.1.2: The system shall extract class names and package declarations from Java files.\",\n    \"FR-4.1.3: The system shall identify class types such as Controller, Service, and Repository.\",\n    \"FR-4.1.4: The system shall extract method signatures from all Java classes.\",\n    \"FR-4.1.5: The system shall detect annotations applied to classes and methods.\"\n  ],\n  \"skipAiValidation\": true\n}"
+            },
+            "description": "Loads FR-2 and FR-4 requirements into MySQL."
+          },
+          "response": []
+        },
+
+        {
+          "name": "5.4 [STEP 4] Confirm All Requirements Stored",
+          "request": {
+            "method": "GET",
+            "url": "{{req_analyzer_url}}/api/v1/requirements",
+            "description": "Confirm all requirements are in MySQL before running matching."
+          },
+          "response": []
+        },
+
+        {
+          "name": "5.5 [STEP 5] Run Full Match Pipeline",
+          "request": {
+            "method": "POST",
+            "url": "{{req_analyzer_url}}/api/v1/match",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "",
+                  "description": "Upload the project ZIP you want to verify"
+                }
+              ]
+            },
+            "description": "THE MAIN DEMO — runs the complete integration pipeline.\n\nAll services must be running:\n• Requirement Analyzer: port 8081 ✓\n• Code Analyzer:        port 8080 ✓\n• Python NLP:           port 8000 ✓\n• MySQL:                port 3306 ✓\n\nResult shows coverage %, IMPLEMENTED/PARTIAL/MISSING per requirement."
+          },
+          "response": []
+        }
+      ]
+    }
+
+  ]
+}

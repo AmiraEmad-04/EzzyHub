@@ -1,0 +1,109 @@
+server:
+  port: 8085
+
+spring:
+  application:
+    name: ezzyhub-api-gateway
+
+  cloud:
+    gateway:
+      # ── Global default filters ────────────────────────────────────────────
+      default-filters:
+        # Add a request-ID header so logs across services can be correlated
+        - AddRequestHeader=X-Gateway-Request-Id, ${random.uuid}
+
+      # ── Route definitions ──────────────────────────────────────────────────
+      # Each service is independently reachable through /api/<service>/**
+      # The StripPrefix=2 filter removes /api/<service> before forwarding.
+      routes:
+
+        # ── Code Analyzer ────────────────────────────────────────────────────
+        # Exposes: POST /api/code/analyze, GET /api/code/health, GET /api/code/info
+        - id: code-analyzer
+          uri: http://localhost:8082
+          predicates:
+            - Path=/api/code/**
+          filters:
+            - StripPrefix=2
+            # Increase max file size for large ZIP uploads (1 GB)
+            - name: RequestSize
+              args:
+                maxSize: 1073741824   # 1 GB in bytes
+
+        # ── Requirement Analyzer ─────────────────────────────────────────────
+        # Exposes: POST /api/requirements/analyze, GET /api/requirements, etc.
+        - id: requirement-analyzer-requirements
+          uri: http://localhost:8081
+          predicates:
+            - Path=/api/requirements/**
+          filters:
+            - StripPrefix=1          # /api/requirements/analyze → /requirements/analyze
+            # Requirement Analyzer already has /api/v1/requirements/** internally;
+            # this rewrite adds the /api/v1 prefix that the controller expects:
+            - RewritePath=/requirements/(?<segment>.*), /api/v1/requirements/${segment}
+
+        # ── Matching endpoint (requirement-to-code) ──────────────────────────
+        # Exposes: POST /api/match
+        - id: requirement-analyzer-match
+          uri: http://localhost:8081
+          predicates:
+            - Path=/api/match
+          filters:
+            - RewritePath=/api/match, /api/v1/match
+            - name: RequestSize
+              args:
+                maxSize: 1073741824   # 1 GB
+
+        # ── Python NLP Microservice ──────────────────────────────────────────
+        # Exposes: POST /api/nlp/preprocess, POST /api/nlp/embed,
+        #          POST /api/nlp/preprocess-and-embed, GET /api/nlp/health
+        - id: python-nlp
+          uri: http://localhost:8000
+          predicates:
+            - Path=/api/nlp/**
+          filters:
+            - StripPrefix=2           # /api/nlp/preprocess → /preprocess
+
+        # ── Gateway aggregate health ─────────────────────────────────────────
+        # Returns combined health of all downstream services.
+        # Handled by GatewayHealthController (no forwarding needed).
+        - id: gateway-health
+          uri: no://op
+          predicates:
+            - Path=/api/health
+          filters:
+            - SetStatus=200
+
+  # Codec settings — allow large multipart bodies (1 GB)
+  codec:
+    max-in-memory-size: 1GB
+
+# ── Actuator ──────────────────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway,metrics
+  endpoint:
+    health:
+      show-details: always
+    gateway:
+      enabled: true
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+logging:
+  level:
+    com.ezzyhub.gateway: DEBUG
+    org.springframework.cloud.gateway: INFO
+
+# ── Downstream service URLs (override in env / Docker) ───────────────────────
+services:
+  code-analyzer:
+    url: http://localhost:8082
+    health-path: /api/v1/health
+  requirement-analyzer:
+    url: http://localhost:8081
+    health-path: /api/v1/requirements/health
+  python-nlp:
+    url: http://localhost:8000
+    health-path: /health
