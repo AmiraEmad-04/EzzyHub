@@ -16,7 +16,7 @@ import java.util.Map;
 /**
  * GET /api/health
  *
- * Aggregates health status from all three downstream services in parallel.
+ * Aggregates health status from all six downstream services in parallel.
  * Returns a combined report so the frontend can show a single health panel.
  *
  * Example response:
@@ -57,6 +57,29 @@ public class GatewayHealthController {
     @Value("${services.python-nlp.health-path:/health}")
     private String pythonNlpHealthPath;
 
+    // NEW: added alongside the new auth-service.
+    @Value("${services.auth-service.url:http://localhost:8087}")
+    private String authServiceUrl;
+
+    @Value("${services.auth-service.health-path:/api/v1/auth/health}")
+    private String authServiceHealthPath;
+
+    // NEW: sonar-analyzer now actually has a working gateway route (see
+    // application.yml) — folded into the aggregate health check too.
+    @Value("${services.sonar-analyzer.url:http://localhost:8084}")
+    private String sonarAnalyzerUrl;
+
+    @Value("${services.sonar-analyzer.health-path:/api/health}")
+    private String sonarAnalyzerHealthPath;
+
+    // NEW: ai-suggestions now actually has a working gateway route (see
+    // application.yml) — folded into the aggregate health check too.
+    @Value("${services.ai-suggestions.url:http://localhost:8088}")
+    private String aiSuggestionsUrl;
+
+    @Value("${services.ai-suggestions.health-path:/actuator/health}")
+    private String aiSuggestionsHealthPath;
+
     public GatewayHealthController() {
         this.webClient = WebClient.builder()
                 .codecs(c -> c.defaultCodecs().maxInMemorySize(1024 * 1024)) // 1 MB for health responses
@@ -65,17 +88,26 @@ public class GatewayHealthController {
 
     @GetMapping
     public Mono<Map<String, Object>> health() {
-        // Run all three health checks in parallel
+        // Run all five health checks in parallel
         Mono<Map<String, Object>> codeHealth = probe("code-analyzer", codeAnalyzerUrl, codeAnalyzerHealthPath);
         Mono<Map<String, Object>> reqHealth  = probe("requirement-analyzer", reqAnalyzerUrl, reqAnalyzerHealthPath);
         Mono<Map<String, Object>> nlpHealth  = probe("python-nlp", pythonNlpUrl, pythonNlpHealthPath);
+        // NEW: added alongside the new auth-service.
+        Mono<Map<String, Object>> authHealth = probe("auth-service", authServiceUrl, authServiceHealthPath);
+        // NEW: sonar-analyzer now actually has a working gateway route.
+        Mono<Map<String, Object>> sonarHealth = probe("sonar-analyzer", sonarAnalyzerUrl, sonarAnalyzerHealthPath);
+        // NEW: ai-suggestions now actually has a working gateway route.
+        Mono<Map<String, Object>> aiSuggestionsHealth = probe("ai-suggestions", aiSuggestionsUrl, aiSuggestionsHealthPath);
 
-        return Mono.zip(codeHealth, reqHealth, nlpHealth)
+        return Mono.zip(codeHealth, reqHealth, nlpHealth, authHealth, sonarHealth, aiSuggestionsHealth)
                 .map(tuple -> {
                     Map<String, Object> services = new LinkedHashMap<>();
                     services.put("code-analyzer",        tuple.getT1());
                     services.put("requirement-analyzer", tuple.getT2());
                     services.put("python-nlp",           tuple.getT3());
+                    services.put("auth-service",         tuple.getT4());
+                    services.put("sonar-analyzer",       tuple.getT5());
+                    services.put("ai-suggestions",       tuple.getT6());
 
                     boolean allUp = services.values().stream()
                             .map(v -> ((Map<?, ?>) v).get("status"))

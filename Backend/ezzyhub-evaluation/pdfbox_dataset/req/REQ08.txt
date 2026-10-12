@@ -1,0 +1,1 @@
+The system shall merge several separate PDF documents into a single combined PDF.

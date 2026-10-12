@@ -3,8 +3,10 @@ package com.ezzyhub.requirementanalyzer.controller;
 import com.ezzyhub.requirementanalyzer.dto.AnalysisRequest;
 import com.ezzyhub.requirementanalyzer.dto.AnalysisResult;
 import com.ezzyhub.requirementanalyzer.exception.InvalidRequirementException;
+import com.ezzyhub.requirementanalyzer.security.JwtVerifier;
 import com.ezzyhub.requirementanalyzer.service.RequirementAnalyzerService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,6 +29,12 @@ class RequirementAnalyzerControllerTest {
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper objectMapper;
     @MockBean RequirementAnalyzerService analyzerService;
+    @MockBean JwtVerifier jwtVerifier;
+
+    @BeforeEach
+    void setUp() {
+        when(jwtVerifier.extractUserId(any())).thenReturn("test-user-id");
+    }
 
     @Test
     @DisplayName("POST /analyze returns 201 with VALID result (new requirement)")

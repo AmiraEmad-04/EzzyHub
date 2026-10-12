@@ -3,20 +3,55 @@ const multer = require("multer");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
-const { execSync, exec } = require("child_process");
+const { execFileSync } = require("child_process");
 const AdmZip = require("adm-zip");
 const axios = require("axios");
 
 const app = express();
-app.use(cors());
+
+const ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || "http://localhost:3000,http://localhost:5173")
+    .split(",")
+    .map((o) => o.trim());
+app.use(cors({ origin: ALLOWED_ORIGINS }));
 app.use(express.json());
 
 const SONAR_URL = process.env.SONAR_URL || "http://sonarqube:9000";
 const SONAR_TOKEN = process.env.SONAR_TOKEN || "";
-const SONAR_USER = process.env.SONAR_USER || "admin";
-const SONAR_PASS = process.env.SONAR_PASS || "admin";
+const SONAR_USER = process.env.SONAR_USER;
+const SONAR_PASS = process.env.SONAR_PASS;
 
-const upload = multer({ dest: "/tmp/uploads/" });
+if (!SONAR_USER || !SONAR_PASS) {
+  throw new Error("SONAR_USER and SONAR_PASS must be set as environment variables (no default credentials allowed).");
+}
+
+const upload = multer({
+  dest: "/tmp/uploads/",
+  limits: { fileSize: 200 * 1024 * 1024 }, // 200MB
+  fileFilter: (req, file, cb) => {
+    if (!file.originalname.toLowerCase().endsWith(".zip")) {
+      return cb(new Error("Only ZIP files are supported"));
+    }
+    cb(null, true);
+  },
+});
+
+// Only allow safe characters in project names used for filesystem paths / process args
+function sanitizeProjectName(name) {
+  const trimmed = (name || "Spring Boot Project").trim();
+  return trimmed.replace(/[^a-zA-Z0-9 ._-]/g, "").slice(0, 100) || "Spring Boot Project";
+}
+
+// Extract a zip while rejecting any entry that would escape the target directory (zip-slip protection)
+function safeExtract(zip, targetDir) {
+  const resolvedTarget = path.resolve(targetDir);
+  for (const entry of zip.getEntries()) {
+    const entryPath = path.resolve(resolvedTarget, entry.entryName);
+    if (!entryPath.startsWith(resolvedTarget + path.sep) && entryPath !== resolvedTarget) {
+      throw new Error(`Zip entry outside target dir: ${entry.entryName}`);
+    }
+  }
+  zip.extractAllTo(resolvedTarget, true);
+}
 
 // Helper: wait for SonarQube to be ready
 async function waitForSonar(retries = 20, delay = 5000) {
@@ -136,14 +171,27 @@ app.post("/api/analyze", upload.any(), async (req, res) => {
   if (req.files && req.files.length > 0) req.file = req.files[0];
 
   const projectKey = `proj-${Date.now()}`;
-  const projectName = req.body.projectName || "Spring Boot Project";
+  const projectName = sanitizeProjectName(req.body.projectName);
   const extractDir = `/tmp/projects/${projectKey}`;
 
   try {
+    // Magic bytes check: confirm the file content is actually a ZIP, not just the filename
+    const header = fs.readFileSync(req.file.path, { encoding: null, flag: "r" }).subarray(0, 4);
+    if (header.length < 4 || header[0] !== 0x50 || header[1] !== 0x4b) {
+      throw new Error("File is not a valid ZIP archive");
+    }
+
     // Extract ZIP
     fs.mkdirSync(extractDir, { recursive: true });
     const zip = new AdmZip(req.file.path);
-    zip.extractAllTo(extractDir, true);
+
+    // Entry-count limit (zip-bomb protection by entry count only)
+    const entries = zip.getEntries();
+    if (entries.length > 10000) {
+      throw new Error("ZIP has too many entries");
+    }
+
+    safeExtract(zip, extractDir);
     fs.unlinkSync(req.file.path);
 
     // Wait for SonarQube
@@ -157,17 +205,18 @@ app.post("/api/analyze", upload.any(), async (req, res) => {
     // Generate token
     const token = await generateToken(`token-${projectKey}`);
 
-    // Run sonar-scanner
-    const scannerCmd = `sonar-scanner \
-      -Dsonar.projectKey=${projectKey} \
-      -Dsonar.projectName="${projectName}" \
-      -Dsonar.sources=. \
-      -Dsonar.host.url=${SONAR_URL} \
-      -Dsonar.login=${token} \
-      -Dsonar.java.binaries=. \
-      -Dsonar.sourceEncoding=UTF-8`;
+    // Run sonar-scanner — pass args as an array (no shell) so no value here can inject commands
+    const scannerArgs = [
+      `-Dsonar.projectKey=${projectKey}`,
+      `-Dsonar.projectName=${projectName}`,
+      "-Dsonar.sources=.",
+      `-Dsonar.host.url=${SONAR_URL}`,
+      `-Dsonar.login=${token}`,
+      "-Dsonar.java.binaries=.",
+      "-Dsonar.sourceEncoding=UTF-8",
+    ];
 
-    execSync(scannerCmd, { cwd: extractDir, stdio: "pipe", timeout: 120000 });
+    execFileSync("sonar-scanner", scannerArgs, { cwd: extractDir, stdio: "pipe", timeout: 120000 });
 
     // Wait for analysis to complete
     await waitForAnalysis(projectKey, auth);
@@ -209,7 +258,7 @@ app.post("/api/analyze", upload.any(), async (req, res) => {
   } catch (err) {
     try { fs.rmSync(extractDir, { recursive: true, force: true }); } catch {}
     console.error(err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Analysis failed. Check server logs for details." });
   }
 });
 

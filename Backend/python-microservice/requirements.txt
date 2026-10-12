@@ -1,5 +1,10 @@
 # EzzyHub NLP Microservice — Python Dependencies
-# v2.0 — Hugging Face integration
+# v2.1 — AST-based Java chunking added
+#
+# KEY CHANGES from v2.0:
+#   - javalang ADDED  (pure-Python Java 8 parser, ~50 KB)
+#     Used by ast_chunker.py to split Java source into method-level chunks
+#     without requiring an LLM or a JDK.
 #
 # KEY CHANGES from v1:
 #   - gensim (Word2Vec 1.6 GB) REMOVED
@@ -28,6 +33,10 @@ numpy>=1.26.0,<2.0.0
 nltk>=3.8.1,<3.10.0                    # tokenisation, stopwords, POS fallback
 spacy>=3.7.0,<4.0.0                    # primary NLP engine (lemmatisation, POS)
 # After install run: python -m spacy download en_core_web_sm
+
+# ── Java AST parsing (NEW in v2.1) ─────────────────────────────────────────────
+javalang>=0.13.0                       # pure-Python Java 8 AST parser — no JDK needed
+                                       # Used by ast_chunker.py for method-level splitting
 
 # ── HTTP / async ──────────────────────────────────────────────────────────────
 httpx>=0.27.0                          # async HF Inference API calls

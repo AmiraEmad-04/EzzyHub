@@ -25,6 +25,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.Semaphore;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -36,6 +37,24 @@ public class AnalysisController {
     @Autowired private AnalysisService analysisService;
     @Autowired private AppConfig appConfig;
     @Autowired private LLMService llmService;
+
+    // Bounds how many /analyze requests (each parsing a large ZIP and making LLM calls)
+    // run at once, to avoid unbounded memory/CPU/LLM-cost consumption under load.
+    private volatile Semaphore analysisSemaphore;
+
+    private Semaphore analysisSemaphore() {
+        Semaphore s = analysisSemaphore;
+        if (s == null) {
+            synchronized (this) {
+                s = analysisSemaphore;
+                if (s == null) {
+                    s = new Semaphore(appConfig.getInt("MAX_CONCURRENT_ANALYSES", 10));
+                    analysisSemaphore = s;
+                }
+            }
+        }
+        return s;
+    }
 
     // =========================================================
     // POST /api/v1/analyze
@@ -50,6 +69,7 @@ public class AnalysisController {
             @ApiResponse(responseCode = "200", description = "Analysis completed successfully",
                     content = @Content(schema = @Schema(implementation = AnalysisResult.class))),
             @ApiResponse(responseCode = "400", description = "Invalid input (not a ZIP, too large, empty)"),
+            @ApiResponse(responseCode = "429", description = "Too many concurrent analysis requests"),
             @ApiResponse(responseCode = "500", description = "Internal server error during analysis")
     })
     public ResponseEntity<?> analyze(
@@ -74,6 +94,13 @@ public class AnalysisController {
 
         log.info("Received analysis request: {} ({} bytes)", fileName, file.getSize());
 
+        Semaphore semaphore = analysisSemaphore();
+        if (!semaphore.tryAcquire()) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(
+                    new ApiError(429, "Too Many Requests",
+                            "Server is at capacity for analysis requests, please retry shortly", request.getRequestURI()));
+        }
+
         try {
             AnalysisResult result = analysisService.analyze(file);
 
@@ -86,8 +113,12 @@ public class AnalysisController {
 
         } catch (Exception e) {
             log.error("Unexpected error during analysis", e);
+            // Full detail is logged above; only a generic message goes to the client
+            // to avoid leaking internal exception/stack-trace details.
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
-                    new ApiError(500, "Internal Server Error", e.getMessage(), request.getRequestURI()));
+                    new ApiError(500, "Internal Server Error", "An unexpected error occurred while processing the request.", request.getRequestURI()));
+        } finally {
+            semaphore.release();
         }
     }
 
@@ -155,7 +186,9 @@ public class AnalysisController {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiError> handleGlobalException(Exception e, HttpServletRequest request) {
         log.error("Unhandled exception at {}: {}", request.getRequestURI(), e.getMessage(), e);
+        // Full detail is logged above; only a generic message goes to the client
+        // to avoid leaking internal exception/stack-trace details.
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
-                new ApiError(500, "Internal Server Error", e.getMessage(), request.getRequestURI()));
+                new ApiError(500, "Internal Server Error", "An unexpected error occurred.", request.getRequestURI()));
     }
 }

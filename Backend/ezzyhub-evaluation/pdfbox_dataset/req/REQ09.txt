@@ -1,0 +1,1 @@
+The system shall split a PDF document into multiple smaller documents by page ranges.

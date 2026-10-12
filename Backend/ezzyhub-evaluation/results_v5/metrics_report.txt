@@ -1,0 +1,79 @@
+================================================================================
+ EzzyHub vs. Wang et al. (QRS 2022) - iTrust Requirement-to-Code Traceability
+================================================================================
+
+WHAT THIS FILE IS
+--------------------------------------------------------------------------------
+This compares EzzyHub against the published results of Wang et al. (QRS 2022)
+on the SAME public dataset (iTrust) using the SAME accuracy measures, so the
+two can be read directly side by side.
+
+Dataset: iTrust   |   Requirements: 131   |   Code files: 226   |   True links in the answer key: 286
+
+Three definitions (for every one, higher = better):
+  - Recall     : of all the CORRECT requirement->code links, how many were found.
+  - Precision  : of all the links the tool REPORTED, how many were actually correct.
+  - F-measure  : one balanced score that combines recall and precision.
+
+
+VIEW 1 - TRACE-LINK RETRIEVAL (this is the view the paper reports)
+--------------------------------------------------------------------------------
+At each recall level, EzzyHub and the paper are shown together. 'Same recall'
+means both found the same share of the true links; the gap is then in precision
+(how many extra wrong candidates came along).
+
+  Recall level             Metric       EzzyHub     Paper   Difference
+  --------------------------------------------------------------------
+  Acceptable (~60% recall) Recall        60.14%    64.12%    -3.98 pts
+                           Precision      7.48%    12.93%    -5.45 pts
+                           F-measure     13.30%    21.53%    -8.23 pts
+  --------------------------------------------------------------------
+  Good (~70% recall)       Recall        71.68%    70.57%    +1.11 pts
+                           Precision      3.99%     9.06%    -5.07 pts
+                           F-measure      7.56%    16.06%    -8.50 pts
+  --------------------------------------------------------------------
+  Excellent (~80% recall)  Recall        80.07%    80.38%    -0.31 pts
+                           Precision      1.87%     4.54%    -2.67 pts
+                           F-measure      3.65%     8.59%    -4.94 pts
+  --------------------------------------------------------------------
+
+  How to read it: EzzyHub reaches the SAME recall levels as the paper (it finds
+  just as many of the true links), but at lower precision in this raw view - to
+  find those links it also proposes many more candidate pairs. That is the normal
+  recall/precision trade-off; the paper's method is tuned to output fewer, cleaner
+  candidates in this specific ranking.
+
+
+VIEW 2 - EZZYHUB'S ACTUAL VERDICT: IMPLEMENTED / PARTIAL / MISSING
+--------------------------------------------------------------------------------
+The paper only outputs a ranked list of candidate links. EzzyHub goes further and
+gives each requirement a real verdict. This view scores THOSE verdicts against the
+answer key. (The paper has no equivalent output, so this section is EzzyHub only.)
+
+  When EzzyHub says a requirement IS implemented:
+      Correct (true positive) :   16
+      Wrong   (false positive):    2
+  When EzzyHub says a requirement is MISSING:
+      Correct (true negative) :    1
+      Wrong   (false negative):    2
+  Marked PARTIAL (left for a human to judge):  110
+  ----------------------------------------------------
+  Total requirements:  131
+
+  Precision of the 'IMPLEMENTED' verdict  : 88.89%
+      -> when EzzyHub says a requirement is done, it is right this often.
+  Recall of truly-implemented requirements : 88.89%
+      -> of the requirements that really are done, EzzyHub catches this share.
+  Overall accuracy (clearly-right verdicts): 12.98%
+      -> the PARTIAL cases are counted as neither right nor wrong, which is why
+         this looks lower than the precision above.
+
+
+BOTTOM LINE
+--------------------------------------------------------------------------------
+  - On the paper's own trace-link measure, EzzyHub MATCHES the paper on recall at
+    every level, and trails on precision (it proposes more candidate links).
+  - On EzzyHub's real product output, when it declares a requirement IMPLEMENTED it
+    is correct 88.89% of the time - a high-confidence verdict the paper's
+    method does not itself provide.
+

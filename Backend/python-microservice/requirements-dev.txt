@@ -1,0 +1,5 @@
+# Test-only dependencies for the NLP microservice.
+# Install with:  pip install -r requirements-dev.txt
+# (httpx is pulled in by starlette/fastapi and is required by TestClient.)
+pytest>=8.0.0
+httpx>=0.27.0

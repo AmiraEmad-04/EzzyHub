@@ -28,7 +28,8 @@ public class GatewayCorsConfig {
         // Allow all origins in development; narrow this in production
         config.setAllowedOriginPatterns(List.of("*"));
         config.setAllowedHeaders(List.of("*"));
-        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
+        // Only the methods actually used by any route below (no route uses PUT or PATCH).
+        config.setAllowedMethods(List.of("GET", "POST", "DELETE", "OPTIONS"));
         config.setAllowCredentials(false);
         config.setMaxAge(3600L);
 

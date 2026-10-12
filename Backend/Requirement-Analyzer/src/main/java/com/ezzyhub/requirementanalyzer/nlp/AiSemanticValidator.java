@@ -1,181 +1,128 @@
 package com.ezzyhub.requirementanalyzer.nlp;
 
 import com.ezzyhub.requirementanalyzer.dto.ValidationResult;
-import com.ezzyhub.requirementanalyzer.service.PythonNlpClient;
+import com.ezzyhub.requirementanalyzer.llm.LlmClient;
+import com.ezzyhub.requirementanalyzer.llm.LlmClientException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.reactive.function.client.WebClientResponseException;
 
-import java.util.List;
-import java.util.Map;
-
-/**
- * Phase 1 Step 3 — AI Semantic Validation.
- *
- * VALIDATION CHAIN (tries each in order until one succeeds):
- *   1. HF Inference API (Mistral-7B) — if USE_HF_VALIDATOR=true and HF_TOKEN set
- *   2. Groq (llama-3.1-8b-instant)  — if GROQ_API_KEY set
- *   3. Rule-based fallback           — always works, no API needed
- *
- * This ensures the system degrades gracefully rather than failing hard
- * when an external AI service is unavailable or rate-limited.
- */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class AiSemanticValidator {
 
-    private final WebClient.Builder webClientBuilder;
-    private final ObjectMapper      objectMapper;
-    private final PythonNlpClient   pythonNlpClient;
+    private final LlmClient llmClient;
+    private final ObjectMapper objectMapper;
 
-    @Value("${groq.api.key:}")
-    private String groqApiKey;
-
-    @Value("${groq.api.model:llama-3.1-8b-instant}")
-    private String groqModel;
-
-    @Value("${hf.token:}")
-    private String hfToken;
-
-    @Value("${use.hf.validator:false}")
-    private boolean useHfValidator;
-
+    // FIX BUG-4: Log a clear, visible warning at startup if the API key is missing.
+    // The old code silently sent blank Authorization headers and got 401 errors that
+    // were swallowed as "AI validation unavailable". Now the operator knows immediately.
     @jakarta.annotation.PostConstruct
-    public void logConfig() {
-        boolean groqOk = groqApiKey != null && !groqApiKey.isBlank();
-        boolean hfOk   = hfToken    != null && !hfToken.isBlank();
-        if (!groqOk && !hfOk) {
-            log.warn("No AI validation API key configured (GROQ_API_KEY or HF_TOKEN). "
-                   + "Using rule-based fallback only.");
+    public void checkApiKey() {
+        if (!llmClient.isConfigured()) {
+            log.warn("╔══════════════════════════════════════════════════════════════════╗");
+            log.warn("║  WARNING: {} API key is not set!                                  ║", llmClient.providerName());
+            log.warn("║  AI semantic validation (Step 3) will be SKIPPED for all calls.  ║");
+            log.warn("╚══════════════════════════════════════════════════════════════════╝");
         } else {
-            log.info("AI Validator: HF={}, Groq={}, preferHF={}",
-                    hfOk ? "configured" : "NOT SET",
-                    groqOk ? "configured" : "NOT SET",
-                    useHfValidator);
+            log.info("✓ {} configured for AI semantic validation", llmClient.providerName());
         }
     }
+
+    private static final String PROMPT_TEMPLATE =
+            "You are a requirements engineering expert. Analyze the software requirement below.\n\n" +
+                    "Requirement: \"%s\"\n\n" +
+                    "Respond with ONLY a raw JSON object. No markdown. No backticks. No explanation. Only JSON.\n\n" +
+                    "Use exactly this structure:\n" +
+                    "{\"isRequirement\":true,\"isClear\":true,\"hasMultiple\":false,\"confidence\":0.9,\"reason\":\"\"}\n\n" +
+                    "Rules:\n" +
+                    "- isRequirement: true if this describes a specific system behavior or constraint\n" +
+                    "- isClear: true if it is unambiguous and specific enough to implement\n" +
+                    "- hasMultiple: true if it bundles 2+ distinct requirements in one sentence\n" +
+                    "- confidence: 0.0-1.0 score for how valid and clear the requirement is\n" +
+                    "- reason: brief explanation if invalid, otherwise empty string";
 
     public ValidationResult validate(String requirementText) {
-        // Try HF Inference API first (if preferred and configured)
-        if (useHfValidator) {
-            ValidationResult hfResult = tryHfValidator(requirementText);
-            if (hfResult != null) return hfResult;
+        if (!llmClient.isConfigured()) {
+            log.warn("{} not configured. Skipping AI validation.", llmClient.providerName());
+            return buildSkippedResult("AI validation skipped (" + llmClient.providerName() + " API key not configured)");
         }
 
-        // Try Groq
-        ValidationResult groqResult = tryGroq(requirementText);
-        if (groqResult != null) return groqResult;
-
-        // Fallback: rule-based
-        return ruleBasedValidation(requirementText);
-    }
-
-    // ── HF Inference API ─────────────────────────────────────────────────────
-
-    private ValidationResult tryHfValidator(String text) {
-        if (hfToken == null || hfToken.isBlank()) return null;
         try {
-            PythonNlpClient.ValidateResult r = pythonNlpClient.validateViaHF(text);
-            log.info("HF validation: valid={}, confidence={}", r.valid(), r.confidence());
-            return ValidationResult.builder()
-                    .valid(r.valid())
-                    .confidence(r.confidence())
-                    .reason(r.reason())
-                    .multipleReqs(r.multipleReqs())
-                    .build();
-        } catch (Exception e) {
-            log.warn("HF validator failed: {}", e.getMessage());
-            return null;
+            String prompt = String.format(PROMPT_TEMPLATE, requirementText);
+            String content = llmClient.complete(prompt);
+
+            log.debug("{} extracted text: {}", llmClient.providerName(), content);
+            return parseResponse(content);
+
+        } catch (LlmClientException e) {
+            log.error("{} AI validation failed: {}", llmClient.providerName(), e.getMessage());
+            return buildFallbackResult("AI validation unavailable: " + e.getMessage());
         }
     }
 
-    // ── Groq ─────────────────────────────────────────────────────────────────
+    private ValidationResult parseResponse(String content) throws LlmClientException {
+        if (content == null || content.isBlank()) {
+            log.warn("{} returned blank content", llmClient.providerName());
+            return buildFallbackResult("Blank content from AI");
+        }
 
-    private static final String GROQ_PROMPT =
-            "You are a requirements engineering expert. Analyze this software requirement: \"%s\"\n\n" +
-            "Respond with ONLY a raw JSON object. No markdown. No backticks. Start directly with {.\n\n" +
-            "{\"isRequirement\":true,\"isClear\":true,\"hasMultiple\":false,\"confidence\":0.9,\"reason\":\"\"}\n\n" +
-            "Rules: isRequirement=true if system behavior/constraint; isClear=true if specific enough to implement; " +
-            "hasMultiple=true if 2+ distinct requirements; confidence=0.0-1.0; reason=brief if invalid else empty.";
+        String text = content.replaceAll("(?s)```json\\s*", "").replaceAll("```", "").trim();
 
-    private ValidationResult tryGroq(String text) {
-        if (groqApiKey == null || groqApiKey.isBlank()) return null;
+        JsonNode parsed;
         try {
-            String prompt = String.format(GROQ_PROMPT, text);
-            Map<String, Object> body = Map.of(
-                    "model",       groqModel,
-                    "messages",    List.of(Map.of("role", "user", "content", prompt)),
-                    "temperature", 0.1,
-                    "max_tokens",  256);
-
-            WebClient client = webClientBuilder.baseUrl("https://api.groq.com")
-                    .defaultHeader("Authorization", "Bearer " + groqApiKey)
-                    .defaultHeader("Content-Type",  "application/json")
-                    .build();
-
-            String raw = client.post()
-                    .uri("/openai/v1/chat/completions")
-                    .bodyValue(body)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .timeout(java.time.Duration.ofSeconds(20))
-                    .block();
-
-            JsonNode root    = objectMapper.readTree(raw);
-            String   content = root.path("choices").get(0).path("message").path("content").asText();
-            return parseGroqResponse(content);
-        } catch (WebClientResponseException e) {
-            log.warn("Groq HTTP {}: {}", e.getStatusCode(), e.getResponseBodyAsString().substring(0, 100));
-            return null;
+            parsed = objectMapper.readTree(text);
         } catch (Exception e) {
-            log.warn("Groq validator failed: {}", e.getMessage());
-            return null;
+            log.warn("{} returned unparseable JSON: {}", llmClient.providerName(), e.getMessage());
+            return buildFallbackResult("Unparseable AI response");
         }
-    }
 
-    private ValidationResult parseGroqResponse(String content) {
-        try {
-            String json = content.trim();
-            // Strip markdown fences
-            if (json.startsWith("```")) json = json.replaceAll("```[a-z]*", "").trim();
-            int s = json.indexOf('{'), e = json.lastIndexOf('}');
-            if (s < 0 || e < 0) return null;
-            JsonNode j = objectMapper.readTree(json.substring(s, e + 1));
-            return ValidationResult.builder()
-                    .valid(      j.path("isRequirement").asBoolean(true) && j.path("isClear").asBoolean(true))
-                    .confidence( j.path("confidence").asDouble(0.7))
-                    .reason(     j.path("reason").asText(""))
-                    .multipleReqs(j.path("hasMultiple").asBoolean(false))
-                    .build();
-        } catch (Exception e) {
-            log.warn("Groq response parse failed: {}", e.getMessage());
-            return null;
+        boolean isRequirement = parsed.path("isRequirement").asBoolean(true);
+        boolean isClear       = parsed.path("isClear").asBoolean(true);
+        boolean hasMultiple   = parsed.path("hasMultiple").asBoolean(false);
+        double  confidence    = parsed.path("confidence").asDouble(0.5);
+        String  reason        = parsed.path("reason").asText("");
+
+        // FIX: evaluate each condition independently so the reason message covers
+        // the actual failing condition rather than only the last one checked.
+        // Old: "valid = isRequirement && isClear && !hasMultiple" caused the reason
+        // to always point at the last failing branch even when an earlier one failed.
+        boolean valid = isRequirement && isClear && !hasMultiple;
+
+        // Determine the primary failure reason in priority order
+        String failReason = null;
+        if (!valid) {
+            failReason = buildReason(isRequirement, isClear, hasMultiple, reason);
         }
-    }
 
-    // ── Rule-based fallback ───────────────────────────────────────────────────
+        log.info("AI Validation result -> valid={}, confidence={}, isRequirement={}, isClear={}, hasMultiple={}, reason={}",
+                valid, confidence, isRequirement, isClear, hasMultiple, reason);
 
-    private ValidationResult ruleBasedValidation(String text) {
-        String[] words = text.toLowerCase().split("\\s+");
-        boolean hasAction = java.util.Arrays.stream(words).anyMatch(
-                w -> java.util.Set.of("allow","enable","provide","validate","verify",
-                        "generate","display","store","retrieve","detect","classify",
-                        "match","analyze","accept","reject","notify","deny","prevent",
-                        "support","ensure","create","delete","update","read","upload",
-                        "download","import","export").contains(w));
-        boolean longEnough = words.length >= 5;
-        double confidence  = (hasAction && longEnough) ? 0.75 : 0.35;
         return ValidationResult.builder()
-                .valid(hasAction && longEnough)
+                .valid(valid)
                 .confidence(confidence)
-                .reason(confidence < 0.5 ? "Insufficient length or no action verb detected" : "")
-                .multipleReqs(false)
+                .reason(failReason)
+                .multipleReqs(hasMultiple)
                 .build();
+    }
+
+    private ValidationResult buildSkippedResult(String reason) {
+        return ValidationResult.builder()
+                .valid(true).confidence(0.5).reason(reason).multipleReqs(false).build();
+    }
+
+    private ValidationResult buildFallbackResult(String reason) {
+        return ValidationResult.builder()
+                .valid(true).confidence(0.5).reason(reason).multipleReqs(false).build();
+    }
+
+    private String buildReason(boolean isReq, boolean isClear, boolean hasMultiple, String aiReason) {
+        if (!isReq)      return "Text does not appear to be a software requirement";
+        if (hasMultiple) return "Text contains multiple requirements — split them into individual requirements";
+        if (!isClear)    return "Requirement is too vague or ambiguous to implement";
+        return aiReason.isBlank() ? "Failed AI semantic validation" : aiReason;
     }
 }

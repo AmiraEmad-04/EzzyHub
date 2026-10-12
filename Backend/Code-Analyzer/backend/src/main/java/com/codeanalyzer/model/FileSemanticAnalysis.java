@@ -27,6 +27,12 @@ public class FileSemanticAnalysis {
     /** Functions defined at module level (outside any class) */
     private List<MethodSemantic> moduleFunctions;
 
+    /** Short capability phrases — what the file ACTUALLY does (one per public operation). */
+    private List<String> capabilities;
+
+    /** Explicit absences/weaknesses — what the file does NOT do or does weakly. */
+    private List<String> limitations;
+
     // ── Inner: Class / Interface / Enum ─────────────────────────────────
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -121,4 +127,8 @@ public class FileSemanticAnalysis {
     public void setClasses(List<ClassSemantic> v){ this.classes = v; }
     public List<MethodSemantic> getModuleFunctions(){ return moduleFunctions; }
     public void setModuleFunctions(List<MethodSemantic> v){ this.moduleFunctions = v; }
+    public List<String> getCapabilities(){ return capabilities; }
+    public void setCapabilities(List<String> v){ this.capabilities = v; }
+    public List<String> getLimitations(){ return limitations; }
+    public void setLimitations(List<String> v){ this.limitations = v; }
 }

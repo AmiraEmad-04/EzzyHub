@@ -1,0 +1,4127 @@
+{
+  "info": {
+    "_postman_id": "78fac6c6-acfd-4736-a5f8-be94420b30fe",
+    "name": "Version1",
+    "description": "Complete test suite for FR-7 Matching Service.\n\nSetup:\n  1. Open Collection Variables and set `zipFilePath` to the full path of EzzyHub-TestProject.zip on your machine.\n  2. Start all services: Python :8000 → Req Analyzer :8081 → Code Analyzer :8082 → Matching :8083.\n  3. Run the collection in order (01 → 02 → 03 → 04).\n\nExpected results with EzzyHub-TestProject.zip:\n  FR-2.x → IMPLEMENTED or PARTIAL  (GitHub import, ZIP upload, project structure — all coded)\n  FR-4.x → IMPLEMENTED or PARTIAL  (Java parsing, annotations, methods — all coded)\n  FR-3.x → MISSING                 (no NLP/requirement processing code in the project)\n  FR-7.x → MISSING                 (no matching service code in the project)\n\n---\n\nADDED IN THIS VERSION — folders 06, 07, 08:\n\n06 — API Gateway (port 8085): confirms each downstream route's path-rewrite rules, the aggregate /api/health panel, unmatched-route 404s, the hidden actuator/gateway/routes endpoint, and the global per-IP rate limiter.\n\n07 — Auth Service (port 8087): register/login happy paths and validation errors (duplicate email, bad email format, short password, missing name), plus /me with a valid, missing, and malformed token.\n\n08 — Report Service (port 8086): save/list/get/delete a report and download its PDF, each with a with-token and without-token case, plus not-found cases.\n\nRun order for 07 → 08 → 06: Auth Service AUTH-2 (or AUTH-7) first to populate {{authToken}}, then Report Service, then API Gateway's GW-6/GW-7/GW-8 (which reuse the same token/zip variables). All new services also need their ports running: auth-service :8087, report-service :8086, api-gateway :8085, plus MySQL for both auth-service and report-service (shared ezzyhub_db).\n\n---\n\nADDED IN THIS VERSION — folder 09:\n\n09 — AI-Suggestions Service (ezzyhubai): generate/iterate Spring Boot code from a matching-service report + project ZIP (OpenAI-backed). Covers the from-match generation flow, version listing/retrieval, per-version file listing, the chat-based iteration endpoint, single-version and full-batch ZIP downloads, and two validation-error cases.\n\n⚠️ Before running folder 09: this service's checked-in application.properties hardcodes a live OpenAI API key and a DB password, and defaults to port 8086 — the same port report-service uses. See the project README (\"Running AI-Suggestions\") for the required env-var and port fix before starting it.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "50405123"
+  },
+  "item": [
+    {
+      "name": "01 — Health Checks",
+      "item": [
+        {
+          "name": "1.2 Python NLP Health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Python is UP', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.status).to.equal('UP');",
+                  "});",
+                  "pm.test('AST chunker available', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.ast_chunker).to.equal(true);",
+                  "});",
+                  "pm.test('SBERT model loaded (req_model)', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.req_model).to.equal(true, 'req_model not loaded — embeddings will be empty!');",
+                  "});",
+                  "const j = pm.response.json();",
+                  "const v22 = j.version && (parseInt(j.version.split('.')[1]) >= 2);",
+                  "console.log('Python version:', j.version, '| Batch embed support:', v22);",
+                  "pm.collectionVariables.set('pythonVersion', j.version || 'unknown');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{pythonUrl}}/health",
+              "host": [
+                "{{pythonUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Verifies Python NLP microservice is loaded. ast_chunker must be true."
+          },
+          "response": []
+        },
+        {
+          "name": "1.3 Python Models List",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Models list returned', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.models).to.be.an('array').with.length.above(0);",
+                  "  j.models.forEach(m => console.log(m.name, '→', m.loaded ? '✅ loaded' : '❌ NOT loaded'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{pythonUrl}}/models",
+              "host": [
+                "{{pythonUrl}}"
+              ],
+              "path": [
+                "models"
+              ]
+            },
+            "description": "Lists all loaded ML models. All 4 should show loaded: true."
+          },
+          "response": []
+        },
+        {
+          "name": "1.4 Matching Service Info",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('API info returned', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.name).to.include('Matching');",
+                  "  pm.expect(j.classificationThresholds).to.have.property('IMPLEMENTED');",
+                  "  pm.expect(j.classificationThresholds).to.have.property('PARTIAL');",
+                  "  pm.expect(j.classificationThresholds).to.have.property('MISSING');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{matchingUrl}}/api/v1/match/info",
+              "host": [
+                "{{matchingUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "match",
+                "info"
+              ]
+            },
+            "description": "Returns API metadata and endpoint list."
+          },
+          "response": []
+        },
+        {
+          "name": "0.2 Code Analyzer — Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{code_analyzer_url}}/api/v1/health",
+              "host": [
+                "{{code_analyzer_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "health"
+              ]
+            },
+            "description": "Verifies the Code Analyzer (port 8080) is running and LLM is configured."
+          },
+          "response": []
+        },
+        {
+          "name": "0.6 Code Analyzer — Swagger UI",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{code_analyzer_url}}/swagger-ui.html",
+              "host": [
+                "{{code_analyzer_url}}"
+              ],
+              "path": [
+                "swagger-ui.html"
+              ]
+            },
+            "description": "Opens interactive Swagger docs for the Code Analyzer."
+          },
+          "response": []
+        },
+        {
+          "name": "0.1 Requirement Analyzer — Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{req_analyzer_url}}/api/v1/requirements/health",
+              "host": [
+                "{{req_analyzer_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requirements",
+                "health"
+              ]
+            },
+            "description": "Verifies the Requirement Analyzer (port 8081) is running."
+          },
+          "response": []
+        },
+        {
+          "name": "1.1 Matching Service Health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Service is UP', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.status).to.equal('UP');",
+                  "  pm.expect(j.port).to.equal(8083);",
+                  "});",
+                  "pm.test('Shows dependency status', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.dependencies).to.have.property('pythonNlp');",
+                  "  pm.expect(j.dependencies).to.have.property('requirementAnalyzer');",
+                  "  console.log('Python NLP:', j.dependencies.pythonNlp);",
+                  "  console.log('Req Analyzer:', j.dependencies.requirementAnalyzer);",
+                  "});",
+                  "pm.test('Algorithm params shown', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.algorithm.cosineWeight).to.include('0.65');",
+                  "  pm.expect(j.algorithm.implementedThreshold).to.include('0.80');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{matchingUrl}}/api/v1/match/health",
+              "host": [
+                "{{matchingUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "match",
+                "health"
+              ]
+            },
+            "description": "Checks Matching Service (8083) and its dependencies. Both pythonNlp and requirementAnalyzer should show UP."
+          },
+          "response": []
+        },
+        {
+          "name": "0.5 Requirement Analyzer — Swagger UI",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{req_analyzer_url}}/swagger-ui.html",
+              "host": [
+                "{{req_analyzer_url}}"
+              ],
+              "path": [
+                "swagger-ui.html"
+              ]
+            },
+            "description": "Opens interactive Swagger docs for the Requirement Analyzer."
+          },
+          "response": []
+        },
+        {
+          "name": "0.3 Code Analyzer — Info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{code_analyzer_url}}/api/v1/info",
+              "host": [
+                "{{code_analyzer_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "info"
+              ]
+            },
+            "description": "Returns API metadata for the Code Analyzer."
+          },
+          "response": []
+        }
+      ],
+      "description": "Verify all services are running before testing. Run these first."
+    },
+    {
+      "name": "📋 1 — Requirement Analyzer (port 8081)",
+      "item": [
+        {
+          "name": "1.1 Analyze Single Requirement — User Registration (FR-1.1.1)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirementText\": \"FR-1.1.1: The system shall allow a new user to create an account using username, email, and password.\",\n  \"skipAiValidation\": false\n}"
+            },
+            "url": {
+              "raw": "{{req_analyzer_url}}/api/v1/requirements/analyze",
+              "host": [
+                "{{req_analyzer_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requirements",
+                "analyze"
+              ]
+            },
+            "description": "Runs the full 13-step NLP pipeline on FR-1.1.1.\n\nExpected: 201 Created (first time) or 200 OK (if re-running).\nStatus field should be VALID.\nKeywords should include: user, create, account, username, email, password."
+          },
+          "response": []
+        },
+        {
+          "name": "1.2 Analyze Single Requirement — User Login (FR-1.2.1)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirementText\": \"FR-1.2.1: The system shall allow registered users to log in using valid credentials.\",\n  \"skipAiValidation\": false\n}"
+            },
+            "url": {
+              "raw": "{{req_analyzer_url}}/api/v1/requirements/analyze",
+              "host": [
+                "{{req_analyzer_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requirements",
+                "analyze"
+              ]
+            },
+            "description": "Tests login requirement — 'log in' is a phrasal verb that should be normalized to 'login'."
+          },
+          "response": []
+        },
+        {
+          "name": "1.3 Analyze Single Requirement — Deny Invalid Login (FR-1.2.2)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirementText\": \"FR-1.2.2: The system shall deny access if credentials are incorrect.\",\n  \"skipAiValidation\": false\n}"
+            },
+            "url": {
+              "raw": "{{req_analyzer_url}}/api/v1/requirements/analyze",
+              "host": [
+                "{{req_analyzer_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requirements",
+                "analyze"
+              ]
+            },
+            "description": "Tests negative requirement (deny/block). Action verb 'deny' should appear in actionVerbs."
+          },
+          "response": []
+        },
+        {
+          "name": "1.4 Analyze Single Requirement — GitHub Import (FR-2.1.1)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirementText\": \"FR-2.1.1: The system shall allow users to import source code from GitHub repositories.\",\n  \"skipAiValidation\": false\n}"
+            },
+            "url": {
+              "raw": "{{req_analyzer_url}}/api/v1/requirements/analyze",
+              "host": [
+                "{{req_analyzer_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requirements",
+                "analyze"
+              ]
+            },
+            "description": "Tests synonym expansion: 'import' should expand to [upload, download, load, fetch, pull]."
+          },
+          "response": []
+        },
+        {
+          "name": "1.5 Analyze Single Requirement — Skip AI Validation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirementText\": \"FR-7.1.2: The system shall calculate a similarity score using the Jaccard similarity algorithm.\",\n  \"skipAiValidation\": true\n}"
+            },
+            "url": {
+              "raw": "{{req_analyzer_url}}/api/v1/requirements/analyze",
+              "host": [
+                "{{req_analyzer_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requirements",
+                "analyze"
+              ]
+            },
+            "description": "skipAiValidation=true — skips Groq API call. Faster, no AI cost. Useful when Groq key is not set."
+          },
+          "response": []
+        },
+        {
+          "name": "1.6 Analyze — INVALID: Too Short (< 5 words)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirementText\": \"Login users\",\n  \"skipAiValidation\": true\n}"
+            },
+            "url": {
+              "raw": "{{req_analyzer_url}}/api/v1/requirements/analyze",
+              "host": [
+                "{{req_analyzer_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requirements",
+                "analyze"
+              ]
+            },
+            "description": "Tests FR-3.3.1 validation: requirement text is too short (< 5 words).\n\nExpected: status = INVALID, error message about minimum word count."
+          },
+          "response": []
+        },
+        {
+          "name": "1.7 Analyze — INVALID: Blank Text",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirementText\": \"\",\n  \"skipAiValidation\": true\n}"
+            },
+            "url": {
+              "raw": "{{req_analyzer_url}}/api/v1/requirements/analyze",
+              "host": [
+                "{{req_analyzer_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requirements",
+                "analyze"
+              ]
+            },
+            "description": "Tests @NotBlank validation.\n\nExpected: 400 Bad Request with validation error."
+          },
+          "response": []
+        },
+        {
+          "name": "1.8 Analyze — Duplicate Requirement (Update Path)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirementText\": \"FR-1.1.1: The system shall allow a new user to create an account using username, email, and password.\",\n  \"skipAiValidation\": true\n}"
+            },
+            "url": {
+              "raw": "{{req_analyzer_url}}/api/v1/requirements/analyze",
+              "host": [
+                "{{req_analyzer_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requirements",
+                "analyze"
+              ]
+            },
+            "description": "Re-submits FR-1.1.1 (same ID as request 1.1). Tests Issue #12 fix.\n\nExpected: 200 OK (not 201), wasUpdated = true."
+          },
+          "response": []
+        },
+        {
+          "name": "1.9 Analyze — Auto ID Generation (No ID prefix)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirementText\": \"The system shall generate a comprehensive verification report combining all analysis results.\",\n  \"skipAiValidation\": true\n}"
+            },
+            "url": {
+              "raw": "{{req_analyzer_url}}/api/v1/requirements/analyze",
+              "host": [
+                "{{req_analyzer_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requirements",
+                "analyze"
+              ]
+            },
+            "description": "No ID prefix in text → system auto-generates REQ-AUTO-N.\n\nExpected: reqId = 'REQ-AUTO-1' (or next auto number)."
+          },
+          "response": []
+        },
+        {
+          "name": "1.10 Batch Analyze — FR-3 Requirements (with AI)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirements\": [\n    \"FR-3.1.1: The system shall accept between 1 and 100 functional requirements.\",\n    \"FR-3.2.1: The system shall remove stop words from requirement text.\",\n    \"FR-3.2.2: The system shall identify technical terms in requirements.\",\n    \"FR-3.3.1: The system shall check that each requirement has a minimum length of five words.\",\n    \"FR-3.3.2: The system shall warn the user if no action verbs are detected.\"\n  ],\n  \"skipAiValidation\": false\n}"
+            },
+            "url": {
+              "raw": "{{req_analyzer_url}}/api/v1/requirements/analyze/batch",
+              "host": [
+                "{{req_analyzer_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requirements",
+                "analyze",
+                "batch"
+              ]
+            },
+            "description": "Batch-processes 5 requirements from FR-3.\n\nExpected: Array of 5 AnalysisResult objects, each with status VALID."
+          },
+          "response": []
+        },
+        {
+          "name": "1.11 Batch Analyze — Skip AI (Save Groq Cost)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirements\": [\n    \"FR-7.1.1: The system shall compare requirement keywords against code feature keywords.\",\n    \"FR-7.1.2: The system shall calculate a similarity score using Jaccard similarity algorithm.\",\n    \"FR-7.2.1: The system shall classify requirements as IMPLEMENTED, PARTIAL, or MISSING.\",\n    \"FR-7.3.1: The system shall count requirements by status: implemented, partial, and missing.\",\n    \"FR-7.3.2: The system shall calculate coverage percentage as implemented divided by total.\",\n    \"FR-8.1.1: The system shall send missing requirement text to the AI API with project context.\",\n    \"FR-10.1: The system shall generate a comprehensive verification report combining all analysis results.\"\n  ],\n  \"skipAiValidation\": true\n}"
+            },
+            "url": {
+              "raw": "{{req_analyzer_url}}/api/v1/requirements/analyze/batch",
+              "host": [
+                "{{req_analyzer_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requirements",
+                "analyze",
+                "batch"
+              ]
+            },
+            "description": "Batch with skipAiValidation=true — no Groq API calls, processes 7 requirements at once.\n\nExpected: Array of 7 results, all VALID."
+          },
+          "response": []
+        },
+        {
+          "name": "1.12 GET All Requirements (Summary — No Blobs)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{req_analyzer_url}}/api/v1/requirements",
+              "host": [
+                "{{req_analyzer_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requirements"
+              ]
+            },
+            "description": "Lists all analyzed requirements stored in MySQL.\nReturns RequirementSummaryDto — no embedding blobs (Issue #14 fix).\n\nExpected: Array of requirement summaries with id, reqId, reqText, status, keywords, actionVerbs."
+          },
+          "response": []
+        },
+        {
+          "name": "1.13 GET Requirement by ID — FR-1.1.1",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{req_analyzer_url}}/api/v1/requirements/FR-1.1.1",
+              "host": [
+                "{{req_analyzer_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requirements",
+                "FR-1.1.1"
+              ]
+            },
+            "description": "Fetches a single requirement by its reqId.\n\nExpected: 200 OK with RequirementSummaryDto.\nIf not found: 404 Not Found."
+          },
+          "response": []
+        },
+        {
+          "name": "1.14 GET Requirement by ID — Not Found",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{req_analyzer_url}}/api/v1/requirements/FR-DOES-NOT-EXIST",
+              "host": [
+                "{{req_analyzer_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requirements",
+                "FR-DOES-NOT-EXIST"
+              ]
+            },
+            "description": "Tests 404 path.\n\nExpected: 404 Not Found."
+          },
+          "response": []
+        },
+        {
+          "name": "1.16 OpenAPI Spec — Requirement Analyzer",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{req_analyzer_url}}/api-docs",
+              "host": [
+                "{{req_analyzer_url}}"
+              ],
+              "path": [
+                "api-docs"
+              ]
+            },
+            "description": "Returns the full OpenAPI JSON spec for the Requirement Analyzer."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "🐍 2 — Python NLP Service (port 8000)",
+      "item": [
+        {
+          "name": "2.1 Preprocess — Login Requirement",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"The system shall allow registered users to log in using valid credentials.\"\n}"
+            },
+            "url": {
+              "raw": "{{python_nlp_url}}/preprocess",
+              "host": [
+                "{{python_nlp_url}}"
+              ],
+              "path": [
+                "preprocess"
+              ]
+            },
+            "description": "Tests Phase 2+3 NLP pipeline.\n\nExpected:\n- 'log in' normalized → 'login' (phrasal verb fix)\n- tokens: [user, register, login, valid, credential]\n- action_verbs: [allow, login]\n- keywords expanded with synonyms: [authenticate, signin, access]"
+          },
+          "response": []
+        },
+        {
+          "name": "2.2 Preprocess — Registration Requirement",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"The system shall allow a new user to create an account using username, email, and password.\"\n}"
+            },
+            "url": {
+              "raw": "{{python_nlp_url}}/preprocess",
+              "host": [
+                "{{python_nlp_url}}"
+              ],
+              "path": [
+                "preprocess"
+              ]
+            },
+            "description": "Tests synonym expansion:\n- 'create' → [add, insert, generate, post]\n- 'user' → [member, account, customer, client, profile]"
+          },
+          "response": []
+        },
+        {
+          "name": "2.3 Preprocess — Short Text (Warning Expected)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Validate user input fields\"\n}"
+            },
+            "url": {
+              "raw": "{{python_nlp_url}}/preprocess",
+              "host": [
+                "{{python_nlp_url}}"
+              ],
+              "path": [
+                "preprocess"
+              ]
+            },
+            "description": "Short text, may trigger 'No action verbs detected' warning.\n\nExpected: warnings array contains a warning message."
+          },
+          "response": []
+        },
+        {
+          "name": "2.4 Preprocess — Blank Text (Error)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{python_nlp_url}}/preprocess",
+              "host": [
+                "{{python_nlp_url}}"
+              ],
+              "path": [
+                "preprocess"
+              ]
+            },
+            "description": "Tests 422 validation.\n\nExpected: 422 Unprocessable Entity — 'text must not be blank'."
+          },
+          "response": []
+        },
+        {
+          "name": "2.5 Embed — Sentence + Keywords",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sentence\": \"The system shall allow users to register with email and password.\",\n  \"keywords\": [\"user\", \"register\", \"email\", \"password\", \"create\", \"account\"]\n}"
+            },
+            "url": {
+              "raw": "{{python_nlp_url}}/embed",
+              "host": [
+                "{{python_nlp_url}}"
+              ],
+              "path": [
+                "embed"
+              ]
+            },
+            "description": "Tests Phase 4 embedding.\n\nExpected:\n- sentence_embedding: array of 384 floats (SBERT)\n- word_embeddings: 6 keywords each with 300-float Word2Vec vector\n- oov_keywords: any keywords not found in Word2Vec vocab"
+          },
+          "response": []
+        },
+        {
+          "name": "2.6 Embed — OOV Keywords Test",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sentence\": \"The microservice uses gRPC and protobufs for inter-service communication.\",\n  \"keywords\": [\"microservice\", \"grpc\", \"protobuf\", \"xyznonexistentword123\"]\n}"
+            },
+            "url": {
+              "raw": "{{python_nlp_url}}/embed",
+              "host": [
+                "{{python_nlp_url}}"
+              ],
+              "path": [
+                "embed"
+              ]
+            },
+            "description": "Tests OOV (out-of-vocabulary) handling.\nKeywords not in Word2Vec vocab return zero vectors and appear in oov_keywords list.\n\nExpected: oov_keywords contains at least 'xyznonexistentword123'."
+          },
+          "response": []
+        },
+        {
+          "name": "2.7 Preprocess-and-Embed (Combined — FR BUG-3 Fix)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"The system shall allow registered users to log in using valid credentials.\"\n}"
+            },
+            "url": {
+              "raw": "{{python_nlp_url}}/preprocess-and-embed",
+              "host": [
+                "{{python_nlp_url}}"
+              ],
+              "path": [
+                "preprocess-and-embed"
+              ]
+            },
+            "description": "Combined endpoint (BUG-3 fix): does NLP + embedding in ONE HTTP call instead of two.\nCuts HTTP calls in half for large projects.\n\nExpected: Full NLP output (tokens, keywords, action_verbs, warnings) + full embedding output (sentence_embedding, word_embeddings, oov_keywords)."
+          },
+          "response": []
+        },
+        {
+          "name": "2.8 Preprocess-and-Embed — Code Feature Text",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"UserController.register — handles new user registration via POST /api/users/register, validates email format and stores hashed password\"\n}"
+            },
+            "url": {
+              "raw": "{{python_nlp_url}}/preprocess-and-embed",
+              "host": [
+                "{{python_nlp_url}}"
+              ],
+              "path": [
+                "preprocess-and-embed"
+              ]
+            },
+            "description": "Simulates processing a code feature description (as the matching service does).\n\nExpected: keywords include [user, register, email, password, store, validate, hash]."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "☕ 3 — Code Analyzer (port 8080)",
+      "item": [
+        {
+          "name": "3.1 Analyze ZIP — Upload Project",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "description": "Select your project ZIP file here in Postman",
+                  "value": ""
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{code_analyzer_url}}/api/v1/analyze",
+              "host": [
+                "{{code_analyzer_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "analyze"
+              ]
+            },
+            "description": "Main Code Analyzer endpoint.\nUploads a ZIP file → runs 2-pass LLM analysis.\n\nPass 1: Full project semantic overview (architecture, stack, patterns).\nPass 2: Deep per-file, per-class, per-method breakdown.\n\nExpected response: AnalysisResult JSON with structure + semanticAnalysis + fileAnalyses.\n\n⚠️ Takes 30–120 seconds for large projects.\n⚠️ Requires LLM API key configured in backend/.env"
+          },
+          "response": []
+        },
+        {
+          "name": "3.2 Analyze ZIP — Error: No File Sent",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": []
+            },
+            "url": {
+              "raw": "{{code_analyzer_url}}/api/v1/analyze",
+              "host": [
+                "{{code_analyzer_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "analyze"
+              ]
+            },
+            "description": "Tests error handling when no file is provided.\n\nExpected: 400 Bad Request."
+          },
+          "response": []
+        },
+        {
+          "name": "3.3 Code Analyzer — OpenAPI Spec",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{code_analyzer_url}}/api-docs",
+              "host": [
+                "{{code_analyzer_url}}"
+              ],
+              "path": [
+                "api-docs"
+              ]
+            },
+            "description": "Returns the full OpenAPI JSON spec for the Code Analyzer."
+          },
+          "response": []
+        },
+        {
+          "name": "3.4 Code Analyzer — Actuator Metrics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{code_analyzer_url}}/actuator",
+              "host": [
+                "{{code_analyzer_url}}"
+              ],
+              "path": [
+                "actuator"
+              ]
+            },
+            "description": "Lists all available actuator endpoints."
+          },
+          "response": []
+        },
+        {
+          "name": "3.5 Code Analyzer — Actuator Health (Detailed)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{code_analyzer_url}}/actuator/health",
+              "host": [
+                "{{code_analyzer_url}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            },
+            "description": "Spring Actuator health with full details (disk space, DB, etc)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "02 — Smoke Tests (Python Pipeline)",
+      "item": [
+        {
+          "name": "2.1 AST Chunk ZIP",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Chunks returned', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.total_chunks).to.be.greaterThan(0, 'No chunks returned — check Python /ast-chunk-zip');",
+                  "  pm.expect(j.chunks).to.be.an('array');",
+                  "  console.log('Files:', j.total_files, '| Chunks:', j.total_chunks);",
+                  "  pm.collectionVariables.set('lastTotalChunks', j.total_chunks);",
+                  "});",
+                  "pm.test('Chunks have embeddings', () => {",
+                  "  const j = pm.response.json();",
+                  "  const withEmb = j.chunks.filter(c => c.embedding && c.embedding.length === 384);",
+                  "  pm.expect(withEmb.length).to.be.greaterThan(0, 'No 384-dim embeddings found!');",
+                  "  console.log('Chunks with 384-dim embeddings:', withEmb.length + '/' + j.total_chunks);",
+                  "});",
+                  "pm.test('Chunks have keywords', () => {",
+                  "  const j = pm.response.json();",
+                  "  const withKws = j.chunks.filter(c => c.keywords && c.keywords.length > 0);",
+                  "  console.log('Chunks with keywords:', withKws.length + '/' + j.total_chunks);",
+                  "  pm.expect(withKws.length).to.be.greaterThan(0);",
+                  "});",
+                  "const j = pm.response.json();",
+                  "if (j.chunks && j.chunks.length > 0) {",
+                  "  const first = j.chunks[0];",
+                  "  console.log('Sample chunk:', first.class_name + '.' + first.method_name, '| type:', first.chunk_type);",
+                  "  console.log('Sample keywords:', (first.keywords || []).join(', '));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "description": "EzzyHub-TestProject.zip",
+                  "src": "{{zipFilePath}}"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{pythonUrl}}/ast-chunk-zip",
+              "host": [
+                "{{pythonUrl}}"
+              ],
+              "path": [
+                "ast-chunk-zip"
+              ]
+            },
+            "description": "Upload EzzyHub-TestProject.zip directly to Python. Should return ~20-30 method/class chunks."
+          },
+          "response": []
+        },
+        {
+          "name": "2.2 Preprocess & Embed Single Requirement",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('384-dim embedding returned', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.sentence_embedding).to.be.an('array').with.lengthOf(384);",
+                  "});",
+                  "pm.test('Embedding is non-zero', () => {",
+                  "  const j = pm.response.json();",
+                  "  const nonZero = j.sentence_embedding.filter(v => v !== 0).length;",
+                  "  pm.expect(nonZero).to.be.greaterThan(100, 'Embedding is mostly zeros — SBERT not loaded!');",
+                  "});",
+                  "pm.test('Keywords extracted', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.keywords).to.be.an('array').with.length.above(0);",
+                  "  console.log('Keywords:', j.keywords.join(', '));",
+                  "  console.log('Action verbs:', j.action_verbs.join(', '));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Allow users to import source code from GitHub repositories\",\n  \"mode\": \"requirement\"\n}"
+            },
+            "url": {
+              "raw": "{{pythonUrl}}/preprocess-and-embed",
+              "host": [
+                "{{pythonUrl}}"
+              ],
+              "path": [
+                "preprocess-and-embed"
+              ]
+            },
+            "description": "Test NLP pipeline + SBERT embedding for one requirement. Embedding must be 384-dim, non-zero."
+          },
+          "response": []
+        },
+        {
+          "name": "2.3 Batch Preprocess & Embed (v2.2 NEW)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 404) {",
+                  "  console.warn('⚠️  /batch-preprocess-and-embed not found — Python is not v2.2 yet. Update main.py!');",
+                  "  pm.test('Batch endpoint exists (needs Python v2.2)', () => {",
+                  "    pm.expect(pm.response.code).to.equal(200, 'Replace main.py with main_updated.py from matching-service.zip');",
+                  "  });",
+                  "  return;",
+                  "}",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('3 results returned', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.total).to.equal(3);",
+                  "  pm.expect(j.success).to.equal(3);",
+                  "  pm.expect(j.failed).to.equal(0);",
+                  "});",
+                  "pm.test('Each result has 384-dim embedding', () => {",
+                  "  const j = pm.response.json();",
+                  "  j.results.forEach(r => {",
+                  "    pm.expect(r.sentence_embedding).to.have.lengthOf(384, 'Bad embedding for index ' + r.index);",
+                  "  });",
+                  "});",
+                  "pm.test('req_id echoed back from prefix', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.results[0].req_id).to.equal('FR-2.1.1');",
+                  "  pm.expect(j.results[1].req_id).to.equal('FR-4.1.3');",
+                  "  pm.expect(j.results[2].req_id).to.equal('FR-7.1.2');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"texts\": [\n    \"FR-2.1.1||Allow users to import source code from GitHub repositories\",\n    \"FR-4.1.3||Identify class types such as Controller Service and Repository\",\n    \"FR-7.1.2||Calculate a similarity score using Jaccard similarity algorithm\"\n  ],\n  \"mode\": \"requirement\"\n}"
+            },
+            "url": {
+              "raw": "{{pythonUrl}}/batch-preprocess-and-embed",
+              "host": [
+                "{{pythonUrl}}"
+              ],
+              "path": [
+                "batch-preprocess-and-embed"
+              ]
+            },
+            "description": "Test new batch endpoint. If Python is v2.2+, this returns 3 embeddings in one call."
+          },
+          "response": []
+        }
+      ],
+      "description": "Test Python endpoints directly before running the full match."
+    },
+    {
+      "name": "03 — Main Match Test (All FRs)",
+      "item": [
+        {
+          "name": "3.1 FULL MATCH — All FR Groups",
+          "event": [
+            {
+              "listen": "pre-request",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "console.log('Sending ZIP from:', pm.collectionVariables.get('zipFilePath'));",
+                  "console.log('Matching service URL:', pm.collectionVariables.get('matchingUrl'));",
+                  "console.log('Expected: FR-2.x and FR-4.x → IMPLEMENTED/PARTIAL | FR-3.x and FR-7.x → MISSING');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// ── Basic response validation ─────────────────────────────",
+                  "pm.test('✅ Status 200 — pipeline completed', () => pm.response.to.have.status(200));",
+                  "",
+                  "const j = pm.response.json();",
+                  "",
+                  "pm.test('✅ Report has unique ID', () => {",
+                  "  pm.expect(j.reportId).to.be.a('string').with.length.above(10);",
+                  "  pm.collectionVariables.set('lastReportId', j.reportId);",
+                  "});",
+                  "",
+                  "// ── Coverage summary (FR-7.3) ─────────────────────────────",
+                  "pm.test('✅ Coverage stats present', () => {",
+                  "  pm.expect(j.totalRequirements).to.equal(46);",
+                  "  pm.expect(j.implementedCount + j.partialCount + j.missingCount).to.equal(46);",
+                  "  pm.expect(j.coveragePercent).to.be.a('number');",
+                  "  pm.collectionVariables.set('lastCoverage', j.coveragePercent);",
+                  "  console.log('=== Coverage Report ===');",
+                  "  console.log('Total:', j.totalRequirements);",
+                  "  console.log('IMPLEMENTED:', j.implementedCount, '|', 'PARTIAL:', j.partialCount, '|', 'MISSING:', j.missingCount);",
+                  "  console.log('Coverage:', j.coveragePercent + '%');",
+                  "  console.log('Code chunks analyzed:', j.totalCodeChunks);",
+                  "  console.log('Timing — Total:', j.processingTimeMs + 'ms | Chunking:', j.chunkingTimeMs + 'ms | Embedding:', j.embeddingTimeMs + 'ms | Matching:', j.matchingTimeMs + 'ms');",
+                  "});",
+                  "",
+                  "pm.test('✅ Code was chunked (chunks > 0)', () => {",
+                  "  pm.expect(j.totalCodeChunks).to.be.greaterThan(0, 'No code chunks — Python /ast-chunk-zip failed');",
+                  "  pm.collectionVariables.set('lastTotalChunks', j.totalCodeChunks);",
+                  "  console.log('Java files:', j.totalJavaFiles, '| Chunks:', j.totalCodeChunks);",
+                  "});",
+                  "",
+                  "pm.test('✅ requirementMatches returned', () => {",
+                  "  pm.expect(j.requirementMatches).to.be.an('array').with.lengthOf(46);",
+                  "});",
+                  "",
+                  "// ── FR-2.x: GitHub + ZIP + Structure — should be found ────",
+                  "const fr2 = j.requirementMatches.filter(r => r.reqId.startsWith('FR-2'));",
+                  "const fr2Found = fr2.filter(r => r.status !== 'MISSING');",
+                  "pm.test('✅ FR-2.x: at least some IMPLEMENTED or PARTIAL (code acquisition is implemented)', () => {",
+                  "  pm.expect(fr2Found.length).to.be.greaterThan(0,",
+                  "    'All FR-2 are MISSING — semantic mismatch. Check embeddings or thresholds.');",
+                  "  console.log('\\n=== FR-2 Code Acquisition ===');",
+                  "  fr2.forEach(r => console.log(r.reqId, r.status, 'score=' + r.score,",
+                  "    '| top:', r.topChunks && r.topChunks[0] ? r.topChunks[0].className + '.' + r.topChunks[0].methodName : 'none'));",
+                  "});",
+                  "",
+                  "// ── FR-4.x: Java parsing — should be found ────────────────",
+                  "const fr4 = j.requirementMatches.filter(r => r.reqId.startsWith('FR-4'));",
+                  "const fr4Found = fr4.filter(r => r.status !== 'MISSING');",
+                  "pm.test('✅ FR-4.x: at least some IMPLEMENTED or PARTIAL (Java parsing is implemented)', () => {",
+                  "  pm.expect(fr4Found.length).to.be.greaterThan(0,",
+                  "    'All FR-4 are MISSING — CodeAnalysisService is clearly in the code but not matched');",
+                  "  console.log('\\n=== FR-4 Java Parsing ===');",
+                  "  fr4.forEach(r => console.log(r.reqId, r.status, 'score=' + r.score));",
+                  "});",
+                  "",
+                  "// ── FR-3.x: NLP processing — should be MISSING ────────────",
+                  "const fr3 = j.requirementMatches.filter(r => r.reqId.startsWith('FR-3'));",
+                  "const fr3Missing = fr3.filter(r => r.status === 'MISSING');",
+                  "pm.test('✅ FR-3.x: most are MISSING (no NLP processing in test project)', () => {",
+                  "  const missingRatio = fr3Missing.length / fr3.length;",
+                  "  pm.expect(missingRatio).to.be.greaterThan(0.5, 'FR-3 requirements are unexpectedly found');",
+                  "  console.log('\\n=== FR-3 Requirements Processing ===');",
+                  "  fr3.forEach(r => console.log(r.reqId, r.status, 'score=' + r.score));",
+                  "});",
+                  "",
+                  "// ── FR-7.x: Matching — should be MISSING ──────────────────",
+                  "const fr7 = j.requirementMatches.filter(r => r.reqId.startsWith('FR-7'));",
+                  "const fr7Missing = fr7.filter(r => r.status === 'MISSING');",
+                  "pm.test('✅ FR-7.x: most are MISSING (matching logic not in test project)', () => {",
+                  "  const missingRatio = fr7Missing.length / fr7.length;",
+                  "  pm.expect(missingRatio).to.be.greaterThan(0.5);",
+                  "  console.log('\\n=== FR-7 Matching ===');",
+                  "  fr7.forEach(r => console.log(r.reqId, r.status, 'score=' + r.score));",
+                  "});",
+                  "",
+                  "// ── Every match has topChunks ──────────────────────────────",
+                  "pm.test('✅ Each result has topChunks array', () => {",
+                  "  j.requirementMatches.forEach(r => {",
+                  "    pm.expect(r.topChunks).to.be.an('array');",
+                  "    pm.expect(r.score).to.be.a('number').within(0, 1);",
+                  "  });",
+                  "});",
+                  "",
+                  "// ── Algorithm weights shown ────────────────────────────────",
+                  "pm.test('✅ Algorithm params in report', () => {",
+                  "  pm.expect(j.cosineWeight).to.equal(0.65);",
+                  "  pm.expect(j.jaccardWeight).to.equal(0.35);",
+                  "  pm.expect(j.implementedThreshold).to.equal(0.80);",
+                  "  pm.expect(j.partialThreshold).to.equal(0.40);",
+                  "});",
+                  "",
+                  "// ── Final summary ──────────────────────────────────────────",
+                  "console.log('\\n========== FINAL REPORT ==========');",
+                  "console.log('Report ID:', j.reportId);",
+                  "console.log('Coverage:', j.coveragePercent + '% (' + j.implementedCount + ' IMPLEMENTED, ' + j.partialCount + ' PARTIAL, ' + j.missingCount + ' MISSING)');",
+                  "console.log('FR-2 found/total:', fr2Found.length + '/' + fr2.length);",
+                  "console.log('FR-4 found/total:', fr4Found.length + '/' + fr4.length);",
+                  "console.log('FR-3 missing/total:', fr3Missing.length + '/' + fr3.length);",
+                  "console.log('FR-7 missing/total:', fr7Missing.length + '/' + fr7.length);",
+                  "console.log('===================================');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "description": "EzzyHub-TestProject.zip",
+                  "src": "{{zipFilePath}}"
+                },
+                {
+                  "key": "requirements",
+                  "type": "text",
+                  "value": "[\n  {\"reqId\":\"FR-2.1.1\",\"reqText\":\"Allow users to import source code from GitHub repositories\"},\n  {\"reqId\":\"FR-2.1.2\",\"reqText\":\"Accept a valid GitHub repository URL\"},\n  {\"reqId\":\"FR-2.1.3\",\"reqText\":\"Validate URL format before processing and display an error if the repository is private or inaccessible\"},\n  {\"reqId\":\"FR-2.1.4\",\"reqText\":\"Download repository contents as a ZIP file\"},\n  {\"reqId\":\"FR-2.1.5\",\"reqText\":\"Extract all Java files from the repository\"},\n  {\"reqId\":\"FR-2.1.6\",\"reqText\":\"Handle nested folder structures\"},\n  {\"reqId\":\"FR-2.2.1\",\"reqText\":\"Allow users to upload ZIP files\"},\n  {\"reqId\":\"FR-2.2.2\",\"reqText\":\"Accept ZIP files up to 50MB\"},\n  {\"reqId\":\"FR-2.2.3\",\"reqText\":\"Extract all java files\"},\n  {\"reqId\":\"FR-2.2.4\",\"reqText\":\"Validate ZIP integrity\"},\n  {\"reqId\":\"FR-2.2.5\",\"reqText\":\"Handle nested directories\"},\n  {\"reqId\":\"FR-2.2.6\",\"reqText\":\"Reject non-ZIP files with an error message\"},\n  {\"reqId\":\"FR-2.3.1\",\"reqText\":\"Preserve original package hierarchy\"},\n  {\"reqId\":\"FR-2.3.2\",\"reqText\":\"Identify package declarations in each Java file\"},\n  {\"reqId\":\"FR-2.3.3\",\"reqText\":\"Group files by package name\"},\n  {\"reqId\":\"FR-2.3.4\",\"reqText\":\"Detect the main application class such as SpringBootApplication\"},\n  {\"reqId\":\"FR-2.3.5\",\"reqText\":\"Identify configuration files application.properties and application.yml\"},\n  {\"reqId\":\"FR-2.3.6\",\"reqText\":\"Create an internal representation of project structure\"},\n  {\"reqId\":\"FR-3.1.1\",\"reqText\":\"Accept 1 to 100 functional requirements\"},\n  {\"reqId\":\"FR-3.1.2\",\"reqText\":\"Split text into individual requirements\"},\n  {\"reqId\":\"FR-3.1.3\",\"reqText\":\"Handle multi-line requirements\"},\n  {\"reqId\":\"FR-3.1.5\",\"reqText\":\"Ignore empty lines and headers\"},\n  {\"reqId\":\"FR-3.2.1\",\"reqText\":\"Remove stop words from requirement text\"},\n  {\"reqId\":\"FR-3.2.2\",\"reqText\":\"Identify technical terms in requirements\"},\n  {\"reqId\":\"FR-3.2.3\",\"reqText\":\"Extract nouns and verbs from requirement text\"},\n  {\"reqId\":\"FR-3.2.4\",\"reqText\":\"Convert words to base form using lemmatization\"},\n  {\"reqId\":\"FR-3.3.1\",\"reqText\":\"Check minimum requirement length at least 5 words\"},\n  {\"reqId\":\"FR-3.3.2\",\"reqText\":\"Warn if no action verbs are detected in requirement\"},\n  {\"reqId\":\"FR-3.3.3\",\"reqText\":\"Display validation warnings before processing requirements\"},\n  {\"reqId\":\"FR-4.1.1\",\"reqText\":\"Parse all java files in the project\"},\n  {\"reqId\":\"FR-4.1.2\",\"reqText\":\"Extract class names and packages from Java files\"},\n  {\"reqId\":\"FR-4.1.3\",\"reqText\":\"Identify class types such as Controller Service Repository and Entity\"},\n  {\"reqId\":\"FR-4.1.4\",\"reqText\":\"Extract method signatures from Java classes\"},\n  {\"reqId\":\"FR-4.1.5\",\"reqText\":\"Detect annotations in Java source code\"},\n  {\"reqId\":\"FR-4.1.6\",\"reqText\":\"Handle parsing errors gracefully\"},\n  {\"reqId\":\"FR-7.1.1\",\"reqText\":\"System compares requirement keywords against code feature keywords\"},\n  {\"reqId\":\"FR-7.1.2\",\"reqText\":\"System calculates a similarity score using Jaccard similarity algorithm\"},\n  {\"reqId\":\"FR-7.1.3\",\"reqText\":\"System normalizes keywords for matching\"},\n  {\"reqId\":\"FR-7.1.4\",\"reqText\":\"System considers synonyms during matching\"},\n  {\"reqId\":\"FR-7.1.5\",\"reqText\":\"System generates a similarity score between 0.0 and 1.0 for each requirement feature pair\"},\n  {\"reqId\":\"FR-7.2.1\",\"reqText\":\"System classifies requirements as IMPLEMENTED PARTIAL or MISSING based on score thresholds\"},\n  {\"reqId\":\"FR-7.2.2\",\"reqText\":\"System stores both score and status for each requirement\"},\n  {\"reqId\":\"FR-7.3.1\",\"reqText\":\"System counts requirements by status implemented partial missing\"},\n  {\"reqId\":\"FR-7.3.2\",\"reqText\":\"System calculates coverage percentage as implemented divided by total times 100\"},\n  {\"reqId\":\"FR-7.3.3\",\"reqText\":\"System displays coverage in report and provides breakdown by status\"},\n  {\"reqId\":\"FR-10.1\",\"reqText\":\"The system shall generate a comprehensive verification report combining all analysis results\"}\n]"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{matchingUrl}}/api/v1/match",
+              "host": [
+                "{{matchingUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "match"
+              ]
+            },
+            "description": "THE MAIN TEST.\n\nUploads EzzyHub-TestProject.zip with all requirements from the document.\nCheck the test results panel for pass/fail per FR group."
+          },
+          "response": []
+        }
+      ],
+      "description": "The main test: upload EzzyHub-TestProject.zip with all requirement groups and check results.\n\nExpected:\n  FR-2.x → IMPLEMENTED or PARTIAL\n  FR-4.x → IMPLEMENTED or PARTIAL\n  FR-3.x → MISSING\n  FR-7.x → MISSING\n  Coverage ≈ 35-50% (only FR-2 and FR-4 are implemented in the test project)"
+    },
+    {
+      "name": "04 — Targeted FR Tests",
+      "item": [
+        {
+          "name": "4.1 FR-2 Only (expect IMPLEMENTED)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "const nonMissing = j.requirementMatches.filter(r => r.status !== 'MISSING');",
+                  "pm.test('FR-2: at least 50% are found (IMPLEMENTED or PARTIAL)', () => {",
+                  "  const ratio = nonMissing.length / j.requirementMatches.length;",
+                  "  pm.expect(ratio).to.be.greaterThan(0.5,",
+                  "    'Less than half of FR-2 found. Embeddings may not be loading correctly.');",
+                  "});",
+                  "console.log('FR-2 results:');",
+                  "j.requirementMatches.forEach(r => {",
+                  "  const top = r.topChunks && r.topChunks[0];",
+                  "  console.log(r.reqId, r.status, 'score=' + r.score,",
+                  "    top ? '→ ' + top.className + '.' + top.methodName : '');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "{{zipFilePath}}"
+                },
+                {
+                  "key": "requirements",
+                  "type": "text",
+                  "value": "[\n  {\"reqId\":\"FR-2.1.1\",\"reqText\":\"Allow users to import source code from GitHub repositories\"},\n  {\"reqId\":\"FR-2.2.1\",\"reqText\":\"Allow users to upload ZIP files\"},\n  {\"reqId\":\"FR-2.2.2\",\"reqText\":\"Accept ZIP files up to 50MB\"},\n  {\"reqId\":\"FR-2.2.3\",\"reqText\":\"Extract all Java files from the uploaded archive\"},\n  {\"reqId\":\"FR-2.2.4\",\"reqText\":\"Validate ZIP integrity and reject corrupted files\"},\n  {\"reqId\":\"FR-2.2.6\",\"reqText\":\"Reject non-ZIP files with an error message\"},\n  {\"reqId\":\"FR-2.3.2\",\"reqText\":\"Identify package declarations in each Java file\"},\n  {\"reqId\":\"FR-2.3.3\",\"reqText\":\"Group files by package name\"},\n  {\"reqId\":\"FR-2.3.4\",\"reqText\":\"Detect the main application class SpringBootApplication\"}\n]"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{matchingUrl}}/api/v1/match",
+              "host": [
+                "{{matchingUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "match"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "4.2 FR-4 Only (expect IMPLEMENTED)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "console.log('FR-4 results:');",
+                  "j.requirementMatches.forEach(r => {",
+                  "  const top = r.topChunks && r.topChunks[0];",
+                  "  console.log(r.reqId, r.status, 'score=' + r.score,",
+                  "    top ? '→ ' + top.className + '.' + top.methodName : '');",
+                  "});",
+                  "const found = j.requirementMatches.filter(r => r.status !== 'MISSING');",
+                  "pm.test('FR-4: CodeAnalysisService methods are detected', () => {",
+                  "  pm.expect(found.length).to.be.greaterThan(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "{{zipFilePath}}"
+                },
+                {
+                  "key": "requirements",
+                  "type": "text",
+                  "value": "[\n  {\"reqId\":\"FR-4.1.1\",\"reqText\":\"Parse all Java files in the project\"},\n  {\"reqId\":\"FR-4.1.2\",\"reqText\":\"Extract class names and packages from Java source files\"},\n  {\"reqId\":\"FR-4.1.3\",\"reqText\":\"Identify class types such as Controller Service Repository and Entity\"},\n  {\"reqId\":\"FR-4.1.4\",\"reqText\":\"Extract method signatures from Java classes\"},\n  {\"reqId\":\"FR-4.1.5\",\"reqText\":\"Detect annotations in Java source code\"},\n  {\"reqId\":\"FR-4.1.6\",\"reqText\":\"Handle parsing errors gracefully\"}\n]"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{matchingUrl}}/api/v1/match",
+              "host": [
+                "{{matchingUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "match"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "4.3 FR-7 Only (expect MISSING)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "console.log('FR-7 results (all should be MISSING or PARTIAL — no matching code in test project):');",
+                  "j.requirementMatches.forEach(r => console.log(r.reqId, r.status, 'score=' + r.score));",
+                  "const nonMissing = j.requirementMatches.filter(r => r.status === 'IMPLEMENTED');",
+                  "pm.test('FR-7: none are IMPLEMENTED (no matching logic in test project)', () => {",
+                  "  pm.expect(nonMissing.length).to.equal(0,",
+                  "    'FR-7 IMPLEMENTED — should not happen unless test project has matching code');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "{{zipFilePath}}"
+                },
+                {
+                  "key": "requirements",
+                  "type": "text",
+                  "value": "[\n  {\"reqId\":\"FR-7.1.1\",\"reqText\":\"System compares requirement keywords against code feature keywords\"},\n  {\"reqId\":\"FR-7.1.2\",\"reqText\":\"System calculates a similarity score using Jaccard similarity algorithm\"},\n  {\"reqId\":\"FR-7.2.1\",\"reqText\":\"System classifies requirements as IMPLEMENTED PARTIAL or MISSING based on score thresholds\"},\n  {\"reqId\":\"FR-7.3.2\",\"reqText\":\"System calculates coverage percentage as implemented divided by total times 100\"}\n]"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{matchingUrl}}/api/v1/match",
+              "host": [
+                "{{matchingUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "match"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "4.4 Error: No file uploaded",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Returns 400 when no file', () => {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([400, 500]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": []
+            },
+            "url": {
+              "raw": "{{matchingUrl}}/api/v1/match",
+              "host": [
+                "{{matchingUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "match"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "4.5 Error: Non-ZIP file",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Returns 400 for non-ZIP', () => {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([400, 422, 500]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "text",
+                  "value": "fake content",
+                  "description": "Sending text as file to trigger validation"
+                },
+                {
+                  "key": "requirements",
+                  "type": "text",
+                  "value": "[]"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{matchingUrl}}/api/v1/match",
+              "host": [
+                "{{matchingUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "match"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Test individual FR groups in isolation for clearer debugging."
+    },
+    {
+      "name": "05 — Swagger UI",
+      "item": [
+        {
+          "name": "Swagger UI (open in browser)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Swagger UI accessible', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{matchingUrl}}/swagger-ui.html",
+              "host": [
+                "{{matchingUrl}}"
+              ],
+              "path": [
+                "swagger-ui.html"
+              ]
+            },
+            "description": "Open http://localhost:8083/swagger-ui.html in your browser to see the interactive API docs."
+          },
+          "response": []
+        },
+        {
+          "name": "OpenAPI JSON Spec",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('OpenAPI spec accessible', () => pm.response.to.have.status(200));",
+                  "pm.test('Spec has /api/v1/match path', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(JSON.stringify(j)).to.include('/api/v1/match');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{matchingUrl}}/api-docs",
+              "host": [
+                "{{matchingUrl}}"
+              ],
+              "path": [
+                "api-docs"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Open these in browser, not Postman."
+    },
+    {
+      "name": "06 — API Gateway (port 8085)",
+      "item": [
+        {
+          "name": "GW-1 Aggregate Health — All Services",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Gateway itself is UP', () => pm.expect(j.gateway).to.eql('UP'));",
+                  "pm.test('services block has all 5 downstream services', () => {",
+                  "  ['code-analyzer','requirement-analyzer','python-nlp','auth-service','sonar-analyzer']",
+                  "    .forEach(k => pm.expect(j.services).to.have.property(k));",
+                  "});",
+                  "pm.test('allUp flag reflects service statuses', () => pm.expect(j).to.have.property('allUp'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/health",
+              "host": [
+                "{{gateway_url}}"
+              ],
+              "path": [
+                "api",
+                "health"
+              ]
+            },
+            "description": "Input: none (GET only).\n\nHow to send: GET request, no body, no headers required.\n\nExpected output: 200 OK with JSON:\n{ \"gateway\": \"UP\", \"timestamp\": \"...\", \"allUp\": true|false,\n  \"services\": { \"code-analyzer\": {status,url}, \"requirement-analyzer\": {...},\n  \"python-nlp\": {...}, \"auth-service\": {...}, \"sonar-analyzer\": {...} } }\n\nallUp is true only if every downstream /health probe returned status UP within 4s. Start all 6 backend services first if you want allUp:true; the request still returns 200 even if some are DOWN — that's the aggregate reporting its findings, not failing itself."
+          },
+          "response": []
+        },
+        {
+          "name": "GW-2 Route → Code Analyzer Health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Body matches direct :8080/api/v1/health response', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.status).to.eql('UP');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/code/health",
+              "host": [
+                "{{gateway_url}}"
+              ],
+              "path": [
+                "api",
+                "code",
+                "health"
+              ]
+            },
+            "description": "Input: none.\n\nHow to send: GET {{gateway_url}}/api/code/health — no body/headers.\n\nExpected output: 200 OK, identical payload to calling {{code_analyzer_url}}/api/v1/health directly. This confirms the gateway's RewritePath rule (/api/code/** → /api/v1/**) is forwarding to the right backend path — this route used to 404 before the rewrite fix."
+          },
+          "response": []
+        },
+        {
+          "name": "GW-3 Route → Requirement Analyzer Health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Service reports UP', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.status).to.eql('UP');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/requirements/health",
+              "host": [
+                "{{gateway_url}}"
+              ],
+              "path": [
+                "api",
+                "requirements",
+                "health"
+              ]
+            },
+            "description": "Input: none.\n\nHow to send: GET {{gateway_url}}/api/requirements/health.\n\nExpected output: 200 OK, same payload as calling {{req_analyzer_url}}/api/v1/requirements/health directly. Confirms StripPrefix=1 + RewritePath combination lands on the correct backend path."
+          },
+          "response": []
+        },
+        {
+          "name": "GW-4 Route → Sonar Analyzer Health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200 (route now exists)', () => pm.response.to.have.status(200));",
+                  "pm.test('Sonar reports UP', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.status).to.eql('UP');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/sonar/health",
+              "host": [
+                "{{gateway_url}}"
+              ],
+              "path": [
+                "api",
+                "sonar",
+                "health"
+              ]
+            },
+            "description": "Input: none.\n\nHow to send: GET {{gateway_url}}/api/sonar/health.\n\nExpected output: 200 OK with sonar-analyzer's health payload. Before the fix this route did not exist at all in the gateway (sonar-analyzer was only listed for the aggregate health panel, never actually reachable through the gateway) — a 404 here means the route config regressed."
+          },
+          "response": []
+        },
+        {
+          "name": "GW-5 Route → Python NLP Preprocess",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Preprocessing result returned', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j).to.have.property('tokens');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gateway_url}}/api/nlp/preprocess",
+              "host": [
+                "{{gateway_url}}"
+              ],
+              "path": [
+                "api",
+                "nlp",
+                "preprocess"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"The system shall allow registered users to log in using valid credentials.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Input (raw JSON body): { \"text\": \"<requirement sentence>\" }\n\nHow to send: POST {{gateway_url}}/api/nlp/preprocess, Content-Type: application/json, body as above (Body tab → raw → JSON).\n\nExpected output: 200 OK, same shape as calling {{python_nlp_url}}/preprocess directly (tokens, action_verbs, keywords, etc). Confirms StripPrefix=2 forwards /api/nlp/preprocess → /preprocess correctly."
+          },
+          "response": []
+        },
+        {
+          "name": "GW-6 Route → Matching Service (multipart)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Match report returned via gateway', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j).to.have.property('requirementMatches');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/match",
+              "host": [
+                "{{gateway_url}}"
+              ],
+              "path": [
+                "api",
+                "match"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "description": "EzzyHub-TestProject.zip",
+                  "src": "{{zipFilePath}}"
+                },
+                {
+                  "key": "requirements",
+                  "type": "text",
+                  "value": "[{\"reqId\":\"FR-2.1.1\",\"reqText\":\"Allow users to import source code from GitHub repositories\"}]"
+                }
+              ]
+            },
+            "description": "Input: multipart/form-data with:\n  file — the .zip project (set the collection variable zipFilePath to its full local path)\n  requirements — JSON array string of {reqId, reqText} objects\n\nHow to send: Body tab → form-data → key 'file' set to type 'File', choose the zip; key 'requirements' as Text with the JSON array string.\n\nExpected output: 200 OK, identical shape to calling {{matchingUrl}}/api/v1/match directly (requirementMatches[], coveragePercent, totalCodeChunks, reportId). Confirms the 1GB RequestSize filter and 900s response-timeout on this route are actually applied — this is the slowest route in the system, so a timeout regression here would show up as a network error rather than a normal HTTP error."
+          },
+          "response": []
+        },
+        {
+          "name": "GW-7 Route → Auth Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('JWT returned via gateway', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j).to.have.property('token');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gateway_url}}/api/auth/login",
+              "host": [
+                "{{gateway_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{testUserEmail}}\",\n  \"password\": \"{{testUserPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Input (raw JSON): { \"email\": \"{{testUserEmail}}\", \"password\": \"{{testUserPassword}}\" }\nRun the Auth Service → AUTH-2 Register request first (in this collection) so this account exists.\n\nHow to send: POST {{gateway_url}}/api/auth/login, Content-Type: application/json.\n\nExpected output: 200 OK, same AuthResponse shape as calling {{auth_url}}/api/v1/auth/login directly (token, tokenType, expiresIn, user). Confirms RewritePath /api/auth/(?<segment>.*) → /api/v1/auth/${segment} is correct."
+          },
+          "response": []
+        },
+        {
+          "name": "GW-8 Route → Report History List",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Array returned', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gateway_url}}/api/history",
+              "host": [
+                "{{gateway_url}}"
+              ],
+              "path": [
+                "api",
+                "history"
+              ]
+            },
+            "description": "Input: none (needs a valid token).\n\nRun Auth Service → AUTH-7 Login first so {{authToken}} is populated.\n\nHow to send: GET {{gateway_url}}/api/history, header Authorization: Bearer {{authToken}} (already templated in the Headers tab).\n\nExpected output: 200 OK with a JSON array of HistorySummary objects for the logged-in user. Confirms the two-rule RewritePath (both /api/history/(?<segment>.*) and bare /api/history) correctly maps the no-path-suffix case to /api/v1/history."
+          },
+          "response": []
+        },
+        {
+          "name": "GW-9 Unknown Route → 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('No predicate matches → 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/does-not-exist/ping",
+              "host": [
+                "{{gateway_url}}"
+              ],
+              "path": [
+                "api",
+                "does-not-exist",
+                "ping"
+              ]
+            },
+            "description": "Input: none.\n\nHow to send: GET {{gateway_url}}/api/does-not-exist/ping — any path that matches none of the configured route predicates.\n\nExpected output: 404 Not Found from Spring Cloud Gateway itself (no downstream service is ever contacted). Confirms unmatched paths fail closed instead of falling through to some default route."
+          },
+          "response": []
+        },
+        {
+          "name": "GW-10 Actuator Gateway Routes Not Exposed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('gateway actuator endpoint is not exposed', () => {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([404, 401, 403]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/actuator/gateway/routes",
+              "host": [
+                "{{gateway_url}}"
+              ],
+              "path": [
+                "actuator",
+                "gateway",
+                "routes"
+              ]
+            },
+            "description": "Input: none.\n\nHow to send: GET {{gateway_url}}/actuator/gateway/routes.\n\nExpected output: 404 (endpoint not registered) — management.endpoints.web.exposure.include only lists health,info,metrics, not gateway. A 200 here with a route table listing every downstream host:port is a regression: it hands an unauthenticated caller a map of the internal topology."
+          },
+          "response": []
+        },
+        {
+          "name": "GW-11 (Manual) Global Rate Limit — 300 req/min per IP",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Only meaningful when run via Collection Runner with Iterations set high (e.g. 305)",
+                  "// and Delay set to 0, from a single machine/IP.",
+                  "if (pm.info.iteration >= 300) {",
+                  "  pm.test('429 after the 300-request/min window is exceeded', () => {",
+                  "    pm.expect(pm.response.code).to.eql(429);",
+                  "  });",
+                  "} else {",
+                  "  pm.test('Status 200 while under the limit', () => pm.response.to.have.status(200));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gateway_url}}/api/health",
+              "host": [
+                "{{gateway_url}}"
+              ],
+              "path": [
+                "api",
+                "health"
+              ]
+            },
+            "description": "MANUAL / RUNNER TEST — not meaningful as a single click-Send request.\n\nHow to run: open Collection Runner, select only this request, set Iterations to 305 and Delay to 0ms, run.\n\nExpected output: the first 300 requests within the same 1-minute window return 200; requests 301+ return 429 with body {\"status\":429,\"error\":\"Too Many Requests\",\"message\":\"Rate limit exceeded, please retry shortly\"}. This is GlobalRateLimitFilter, a per-IP backstop across every route (separate from auth-service's own 10/min login limiter)."
+          },
+          "response": []
+        }
+      ],
+      "description": "Verifies the gateway's own routing/rewrite rules, aggregate health, CORS dedup, and rate limiting — not the downstream services' own logic (those are covered in their own folders). Start every backend service plus the gateway itself before running this folder."
+    },
+    {
+      "name": "07 — Auth Service (port 8087)",
+      "item": [
+        {
+          "name": "AUTH-1 Health Check",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Service reports UP', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.status).to.eql('UP');",
+                  "  pm.expect(j.module).to.eql('Auth Service');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{auth_url}}/api/v1/auth/health",
+              "host": [
+                "{{auth_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "health"
+              ]
+            },
+            "description": "Input: none.\n\nHow to send: GET {{auth_url}}/api/v1/auth/health.\n\nExpected output: 200 OK, { \"status\": \"UP\", \"module\": \"Auth Service\", \"version\": \"1.0.0\" }."
+          },
+          "response": []
+        },
+        {
+          "name": "AUTH-2 Register — New User",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Generates a fresh, unique email each full collection run so re-running",
+                  "// the whole suite doesn't immediately collide with AUTH-3's duplicate-email check.",
+                  "pm.collectionVariables.set('testUserEmail', 'qa.' + Date.now() + '@ezzyhub.test');",
+                  "pm.collectionVariables.set('testUserPassword', 'Password123!');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201 Created', () => pm.response.to.have.status(201));",
+                  "const j = pm.response.json();",
+                  "pm.test('JWT token returned', () => pm.expect(j.token).to.be.a('string').and.not.empty);",
+                  "pm.test('tokenType is Bearer', () => pm.expect(j.tokenType).to.eql('Bearer'));",
+                  "pm.test('user object echoes email, no password field', () => {",
+                  "  pm.expect(j.user.email).to.eql(pm.collectionVariables.get('testUserEmail'));",
+                  "  pm.expect(j.user).to.not.have.property('password');",
+                  "});",
+                  "pm.collectionVariables.set('authToken', j.token);",
+                  "pm.collectionVariables.set('testUserId', j.user.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{auth_url}}/api/v1/auth/register",
+              "host": [
+                "{{auth_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"QA Tester\",\n  \"email\": \"{{testUserEmail}}\",\n  \"password\": \"{{testUserPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Input (raw JSON body): { \"fullName\": string, \"email\": string, \"password\": string (min 8 chars) }\nA pre-request script auto-generates a unique {{testUserEmail}} and sets {{testUserPassword}} = Password123! for the run, so you don't need to type anything by hand.\n\nHow to send: POST {{auth_url}}/api/v1/auth/register, Content-Type: application/json, body as above (Body tab → raw → JSON).\n\nExpected output: 201 Created with AuthResponse: { token, tokenType:\"Bearer\", expiresIn, user:{id, fullName, email, role, createdAt} }. No password/hash anywhere in the response. The test script saves {{authToken}} and {{testUserId}} for later requests."
+          },
+          "response": []
+        },
+        {
+          "name": "AUTH-3 Register — Duplicate Email → 409",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 409 Conflict', () => pm.response.to.have.status(409));",
+                  "pm.test('Error mentions the email is taken', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.error).to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{auth_url}}/api/v1/auth/register",
+              "host": [
+                "{{auth_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"QA Tester Duplicate\",\n  \"email\": \"{{testUserEmail}}\",\n  \"password\": \"{{testUserPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Run AUTH-2 first — this reuses the same {{testUserEmail}} that request just registered.\n\nInput (raw JSON body): same shape as AUTH-2, same email.\n\nHow to send: POST {{auth_url}}/api/v1/auth/register, Content-Type: application/json.\n\nExpected output: 409 Conflict, { timestamp, status:409, error:\"Conflict\", message:\"...already exists...\" }."
+          },
+          "response": []
+        },
+        {
+          "name": "AUTH-4 Register — Invalid Email Format → 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('Validation message mentions email', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.message.toLowerCase()).to.include('email');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{auth_url}}/api/v1/auth/register",
+              "host": [
+                "{{auth_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Bad Email\",\n  \"email\": \"not-an-email\",\n  \"password\": \"Password123!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Input (raw JSON body): email set to a non-email string, e.g. \"not-an-email\".\n\nHow to send: POST {{auth_url}}/api/v1/auth/register, Content-Type: application/json.\n\nExpected output: 400 Bad Request, { timestamp, status:400, error:\"Bad Request\", message:\"email: email must be a valid email address\" }."
+          },
+          "response": []
+        },
+        {
+          "name": "AUTH-5 Register — Password Too Short → 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('Validation message mentions 8 characters', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.message).to.include('8 characters');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{auth_url}}/api/v1/auth/register",
+              "host": [
+                "{{auth_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Short Pw\",\n  \"email\": \"shortpw@ezzyhub.test\",\n  \"password\": \"abc123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Input (raw JSON body): password shorter than 8 characters, e.g. \"abc123\" (6 chars).\n\nHow to send: POST {{auth_url}}/api/v1/auth/register, Content-Type: application/json.\n\nExpected output: 400 Bad Request, message:\"password: password must be at least 8 characters\"."
+          },
+          "response": []
+        },
+        {
+          "name": "AUTH-6 Register — Missing Full Name → 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('Validation message mentions fullName', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.message).to.include('fullName');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{auth_url}}/api/v1/auth/register",
+              "host": [
+                "{{auth_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"\",\n  \"email\": \"noname@ezzyhub.test\",\n  \"password\": \"Password123!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Input (raw JSON body): fullName left blank (\"\").\n\nHow to send: POST {{auth_url}}/api/v1/auth/register, Content-Type: application/json.\n\nExpected output: 400 Bad Request, message:\"fullName: fullName is required\"."
+          },
+          "response": []
+        },
+        {
+          "name": "AUTH-7 Login — Valid Credentials",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('JWT returned', () => pm.expect(j.token).to.be.a('string').and.not.empty);",
+                  "pm.collectionVariables.set('authToken', j.token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{auth_url}}/api/v1/auth/login",
+              "host": [
+                "{{auth_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{testUserEmail}}\",\n  \"password\": \"{{testUserPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Run AUTH-2 (Register) first so this account exists.\n\nInput (raw JSON body): { \"email\": \"{{testUserEmail}}\", \"password\": \"{{testUserPassword}}\" }\n\nHow to send: POST {{auth_url}}/api/v1/auth/login, Content-Type: application/json.\n\nExpected output: 200 OK, same AuthResponse shape as register. Test script refreshes {{authToken}}, which every Report Service request below depends on."
+          },
+          "response": []
+        },
+        {
+          "name": "AUTH-8 Login — Wrong Password → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 401 Unauthorized', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{auth_url}}/api/v1/auth/login",
+              "host": [
+                "{{auth_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{testUserEmail}}\",\n  \"password\": \"TotallyWrongPassword!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Input (raw JSON body): correct {{testUserEmail}}, wrong password.\n\nHow to send: POST {{auth_url}}/api/v1/auth/login, Content-Type: application/json.\n\nExpected output: 401 Unauthorized, { status:401, error:\"Unauthorized\", message:\"Invalid email or password\" } (message is intentionally generic — it doesn't reveal whether the email or the password was the wrong part)."
+          },
+          "response": []
+        },
+        {
+          "name": "AUTH-9 Login — Nonexistent Email → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 401 Unauthorized', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{auth_url}}/api/v1/auth/login",
+              "host": [
+                "{{auth_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"nobody-registered@ezzyhub.test\",\n  \"password\": \"Password123!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Input (raw JSON body): an email that was never registered.\n\nHow to send: POST {{auth_url}}/api/v1/auth/login, Content-Type: application/json.\n\nExpected output: 401 Unauthorized — same generic message as AUTH-8, so a login attempt can't be used to enumerate which emails have accounts."
+          },
+          "response": []
+        },
+        {
+          "name": "AUTH-10 Get Current User — Valid Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('Returns the logged-in user, no password', () => {",
+                  "  pm.expect(j.email).to.eql(pm.collectionVariables.get('testUserEmail'));",
+                  "  pm.expect(j).to.not.have.property('password');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{auth_url}}/api/v1/auth/me",
+              "host": [
+                "{{auth_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "me"
+              ]
+            },
+            "description": "Run AUTH-7 (Login) first so {{authToken}} is fresh.\n\nInput: none — identity comes entirely from the Authorization header.\n\nHow to send: GET {{auth_url}}/api/v1/auth/me, header Authorization: Bearer {{authToken}} (already templated in the Headers tab).\n\nExpected output: 200 OK, UserDto: { id, fullName, email, role, createdAt }."
+          },
+          "response": []
+        },
+        {
+          "name": "AUTH-11 Get Current User — No Token → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 401 Unauthorized', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{auth_url}}/api/v1/auth/me",
+              "host": [
+                "{{auth_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "me"
+              ]
+            },
+            "description": "Input: none, and deliberately no Authorization header at all.\n\nHow to send: GET {{auth_url}}/api/v1/auth/me — leave the Headers tab empty (don't add Authorization).\n\nExpected output: 401 Unauthorized."
+          },
+          "response": []
+        },
+        {
+          "name": "AUTH-12 Get Current User — Malformed Token → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 401 Unauthorized', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer this.is.not.a.valid.jwt"
+              }
+            ],
+            "url": {
+              "raw": "{{auth_url}}/api/v1/auth/me",
+              "host": [
+                "{{auth_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "me"
+              ]
+            },
+            "description": "Input: an Authorization header with a garbage/invalid JWT string.\n\nHow to send: GET {{auth_url}}/api/v1/auth/me, header Authorization: Bearer this.is.not.a.valid.jwt.\n\nExpected output: 401 Unauthorized — the signature check fails before any claim is read."
+          },
+          "response": []
+        }
+      ],
+      "description": "Direct calls to auth-service on its own port. Run in order: AUTH-1 → AUTH-2 → ... AUTH-2 and AUTH-7 populate {{authToken}}, {{testUserId}}, and {{testUserEmail}}, which the Report Service folder and the GW-7/GW-8 gateway requests depend on."
+    },
+    {
+      "name": "08 — Report Service (port 8086)",
+      "item": [
+        {
+          "name": "REP-1 Health Check",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Service reports UP', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.status).to.eql('UP');",
+                  "  pm.expect(j.service).to.eql('report-service');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{report_url}}/api/v1/history/health",
+              "host": [
+                "{{report_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "history",
+                "health"
+              ]
+            },
+            "description": "Input: none.\n\nHow to send: GET {{report_url}}/api/v1/history/health.\n\nExpected output: 200 OK, { status:\"UP\", service:\"report-service\", version:\"1.0.0\", timestamp }."
+          },
+          "response": []
+        },
+        {
+          "name": "REP-2 Save Analysis — Valid Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201 Created', () => pm.response.to.have.status(201));",
+                  "const j = pm.response.json();",
+                  "pm.test('Record id returned', () => pm.expect(j.id).to.exist);",
+                  "pm.collectionVariables.set('lastReportId', j.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{report_url}}/api/v1/history",
+              "host": [
+                "{{report_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "history"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectName\": \"EzzyHub-TestProject\",\n  \"analysisType\": \"COMBINED\",\n  \"totalRequirements\": 10,\n  \"implementedCount\": 6,\n  \"partialCount\": 2,\n  \"missingCount\": 2,\n  \"coveragePercentage\": 60.0,\n  \"totalSourceFiles\": 25,\n  \"analyzedFileCount\": 25,\n  \"status\": \"success\",\n  \"codeAnalysisResult\": { \"classes\": 12, \"note\": \"sample payload for QA\" },\n  \"matchResult\": { \"requirementMatches\": [] },\n  \"sonarResult\": null,\n  \"aiSuggestions\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Run Auth Service → AUTH-7 (Login) first so {{authToken}} is set.\n\nInput (raw JSON body, SaveRequest — all fields optional except what you want stored):\n{\n  \"projectName\": \"EzzyHub-TestProject\",\n  \"analysisType\": \"COMBINED\",\n  \"totalRequirements\": 10,\n  \"implementedCount\": 6,\n  \"partialCount\": 2,\n  \"missingCount\": 2,\n  \"coveragePercentage\": 60.0,\n  \"totalSourceFiles\": 25,\n  \"analyzedFileCount\": 25,\n  \"status\": \"success\",\n  \"codeAnalysisResult\": { \"classes\": 12, \"note\": \"sample payload for QA\" },\n  \"matchResult\": { \"requirementMatches\": [] },\n  \"sonarResult\": null,\n  \"aiSuggestions\": null\n}\n\nHow to send: POST {{report_url}}/api/v1/history, headers Authorization: Bearer {{authToken}} and Content-Type: application/json, body as above.\n\nExpected output: 201 Created, { \"id\": <number>, \"message\": \"Analysis saved successfully\" }. Test script saves {{lastReportId}} for the requests below."
+          },
+          "response": []
+        },
+        {
+          "name": "REP-3 Save Analysis — No Token → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "pm.test('Error explains missing/malformed header', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.error).to.include('Authorization');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{report_url}}/api/v1/history",
+              "host": [
+                "{{report_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "history"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectName\": \"Should Be Rejected\",\n  \"analysisType\": \"COMBINED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Input (raw JSON body): any SaveRequest payload; deliberately no Authorization header.\n\nHow to send: POST {{report_url}}/api/v1/history, Content-Type: application/json only — no Authorization.\n\nExpected output: 401 Unauthorized, { \"error\": \"Missing or malformed Authorization header\" }."
+          },
+          "response": []
+        },
+        {
+          "name": "REP-4 List History — With Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Array of HistorySummary returned, includes the saved record', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j).to.be.an('array');",
+                  "  const ids = j.map(r => String(r.id));",
+                  "  pm.expect(ids).to.include(String(pm.collectionVariables.get('lastReportId')));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{report_url}}/api/v1/history",
+              "host": [
+                "{{report_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "history"
+              ]
+            },
+            "description": "Run REP-2 first so there's at least one record for this user.\n\nInput: none.\n\nHow to send: GET {{report_url}}/api/v1/history, header Authorization: Bearer {{authToken}}.\n\nExpected output: 200 OK, JSON array of HistorySummary objects (id, projectName, analysisType, createdAt, status, counters, hasCodeAnalysis/hasMatchResult/etc — no raw JSON blobs)."
+          },
+          "response": []
+        },
+        {
+          "name": "REP-5 List History — No Token → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 401 Unauthorized', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{report_url}}/api/v1/history",
+              "host": [
+                "{{report_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "history"
+              ]
+            },
+            "description": "Input: none, deliberately no Authorization header.\n\nHow to send: GET {{report_url}}/api/v1/history — empty Headers tab.\n\nExpected output: 401 Unauthorized."
+          },
+          "response": []
+        },
+        {
+          "name": "REP-6 Get Record by ID — Valid",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Full record returned, including raw payload fields', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(String(j.id)).to.eql(String(pm.collectionVariables.get('lastReportId')));",
+                  "  pm.expect(j.projectName).to.eql('EzzyHub-TestProject');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{report_url}}/api/v1/history/{{lastReportId}}",
+              "host": [
+                "{{report_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "history",
+                "{{lastReportId}}"
+              ]
+            },
+            "description": "Run REP-2 first so {{lastReportId}} points at a real record.\n\nInput: record id in the URL path (already templated as {{lastReportId}}).\n\nHow to send: GET {{report_url}}/api/v1/history/{{lastReportId}}, header Authorization: Bearer {{authToken}}.\n\nExpected output: 200 OK, the full AnalysisRecord as JSON — includes the raw codeAnalysisResult/matchResult/sonarResult/aiSuggestions payloads that the list endpoint omits."
+          },
+          "response": []
+        },
+        {
+          "name": "REP-7 Get Record by ID — Not Found → 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 404 Not Found', () => pm.response.to.have.status(404));",
+                  "pm.test('Error body present', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.error).to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{report_url}}/api/v1/history/999999999",
+              "host": [
+                "{{report_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "history",
+                "999999999"
+              ]
+            },
+            "description": "Input: a record id that doesn't exist (999999999) in the URL path.\n\nHow to send: GET {{report_url}}/api/v1/history/999999999, header Authorization: Bearer {{authToken}}.\n\nExpected output: 404 Not Found, { \"error\": \"Record not found\" }. The same 404 is also returned if the id exists but belongs to a different user — the response never reveals which case it was."
+          },
+          "response": []
+        },
+        {
+          "name": "REP-8 Get Record by ID — No Token → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 401 Unauthorized', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{report_url}}/api/v1/history/{{lastReportId}}",
+              "host": [
+                "{{report_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "history",
+                "{{lastReportId}}"
+              ]
+            },
+            "description": "Input: valid {{lastReportId}} in the path, deliberately no Authorization header.\n\nHow to send: GET {{report_url}}/api/v1/history/{{lastReportId}} — empty Headers tab.\n\nExpected output: 401 Unauthorized (identity is always checked before the record lookup)."
+          },
+          "response": []
+        },
+        {
+          "name": "REP-9 Download PDF — Valid",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Content-Type is application/pdf', () => {",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/pdf');",
+                  "});",
+                  "pm.test('Content-Disposition suggests a filename', () => {",
+                  "  pm.expect(pm.response.headers.get('Content-Disposition')).to.include('ezzyhub-report-');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{report_url}}/api/v1/history/{{lastReportId}}/pdf",
+              "host": [
+                "{{report_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "history",
+                "{{lastReportId}}",
+                "pdf"
+              ]
+            },
+            "description": "Run REP-2 first so {{lastReportId}} points at a real record.\n\nInput: record id in the URL path.\n\nHow to send: GET {{report_url}}/api/v1/history/{{lastReportId}}/pdf, header Authorization: Bearer {{authToken}}. In Postman, use 'Send and Download' to save the binary body to a file if you want to open it.\n\nExpected output: 200 OK, binary PDF body, Content-Type: application/pdf, Content-Disposition: attachment; filename=\"ezzyhub-report-<id>-<yyyyMMdd>.pdf\"."
+          },
+          "response": []
+        },
+        {
+          "name": "REP-10 Download PDF — Not Found → 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 404 Not Found', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{report_url}}/api/v1/history/999999999/pdf",
+              "host": [
+                "{{report_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "history",
+                "999999999",
+                "pdf"
+              ]
+            },
+            "description": "Input: a record id that doesn't exist (999999999) in the URL path.\n\nHow to send: GET {{report_url}}/api/v1/history/999999999/pdf, header Authorization: Bearer {{authToken}}.\n\nExpected output: 404 Not Found, empty body."
+          },
+          "response": []
+        },
+        {
+          "name": "REP-11 Delete Record — Valid",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Deletion confirmed', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.message).to.eql('Record deleted');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{report_url}}/api/v1/history/{{lastReportId}}",
+              "host": [
+                "{{report_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "history",
+                "{{lastReportId}}"
+              ]
+            },
+            "description": "Run REP-2 first so {{lastReportId}} points at a record you own. Run this LAST in the Report Service folder — it deletes the record REP-6/REP-7/REP-9 depend on.\n\nInput: record id in the URL path.\n\nHow to send: DELETE {{report_url}}/api/v1/history/{{lastReportId}}, header Authorization: Bearer {{authToken}}.\n\nExpected output: 200 OK, { \"message\": \"Record deleted\", \"id\": <id> }."
+          },
+          "response": []
+        },
+        {
+          "name": "REP-12 Delete Record — Already Deleted → 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 404 Not Found', () => pm.response.to.have.status(404));",
+                  "pm.test('Error explains not found or access denied', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.error).to.include('not found');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{report_url}}/api/v1/history/{{lastReportId}}",
+              "host": [
+                "{{report_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "history",
+                "{{lastReportId}}"
+              ]
+            },
+            "description": "Run REP-11 immediately before this — it deletes {{lastReportId}}, and this repeats the same delete call.\n\nInput: the same (now already-deleted) record id in the URL path.\n\nHow to send: DELETE {{report_url}}/api/v1/history/{{lastReportId}}, header Authorization: Bearer {{authToken}}.\n\nExpected output: 404 Not Found, { \"error\": \"Record not found or access denied\" } — the same message is used whether the record never existed, was already deleted, or belongs to someone else, so the response doesn't leak which case it was."
+          },
+          "response": []
+        }
+      ],
+      "description": "Direct calls to report-service on its own port. Requires {{authToken}} to be set — run Auth Service → AUTH-7 (Login) first. Run in order: REP-1 → REP-2 → ... → REP-11 (delete) should be run last since REP-6/7/9/10 read the same {{lastReportId}} record."
+    },
+    {
+      "name": "09 — AI-Suggestions Service (port 8086 in code / run on 8088)",
+      "description": "Endpoints for the AI-Suggestions microservice (Backend/AI-Suggestions/ezzyhubai) — generates and iterates Spring Boot code from a matching-service report + project ZIP, using OpenAI.\n\n⚠️ PORT COLLISION: this service's own application.properties has server.port=8086, the SAME port report-service uses. Start it with server.port=8088 (see README) — {{ai_suggestions_url}} already points at 8088.\n\n⚠️ SECRETS: the checked-in application.properties also contains a live OpenAI API key and a DB password in plaintext. Rotate the key and move both to environment variables before running this service anywhere shared (see README's Security Notes section).\n\nRun order: AI-1 (health) → AI-9 (Generate From Match, populates {{lastBatchId}} and {{lastRequirementId}}) → AI-2..AI-8 (version/file/chat/download operations) → AI-10 (download batch).",
+      "item": [
+        {
+          "name": "AI-1 Health Check (Spring Boot actuator)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{ai_suggestions_url}}/actuator/health",
+              "host": [
+                "{{ai_suggestions_url}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            },
+            "description": "No custom /health endpoint exists in RequirementController — this hits Spring Boot's default actuator health endpoint instead. Requires spring-boot-starter-actuator on the classpath and management.endpoints.web.exposure.include=health (add this if actuator isn't already exposed)."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Status UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "AI-9 Generate From Match (report + project ZIP → generated code)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('batchId returned', () => pm.expect(j).to.have.property('batchId'));",
+                  "if (j.batchId) pm.collectionVariables.set('lastBatchId', j.batchId);",
+                  "if (j.versions && j.versions.length > 0) {",
+                  "  pm.collectionVariables.set('lastRequirementId', j.versions[0].requirement.id);",
+                  "  pm.collectionVariables.set('lastVersionNumber', j.versions[0].versionNumber);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{ai_suggestions_url}}/api/requirements/from-match",
+              "host": [
+                "{{ai_suggestions_url}}"
+              ],
+              "path": [
+                "api",
+                "requirements",
+                "from-match"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "report",
+                  "type": "file",
+                  "src": "{{aiSuggestionsReportPath}}",
+                  "description": "JSON matching-service report (requirementMatches[]: reqId, reqText, status, score, topChunks[])"
+                },
+                {
+                  "key": "projectZip",
+                  "type": "file",
+                  "src": "{{zipFilePath}}",
+                  "description": "ZIP of the target Spring Boot project to modify/extend"
+                }
+              ]
+            },
+            "description": "Input (multipart/form-data):\n  report      — JSON file matching MatchReportDto, e.g. { \"requirementMatches\": [ { \"reqId\": \"FR-1.1\", \"reqText\": \"...\", \"status\": \"MISSING\", \"score\": 0.2, \"topChunks\": [ { \"filePath\": \"src/.../UserController.java\" } ] } ] }\n  projectZip  — ZIP of the existing project to generate/modify code in\n\nFor each requirement, the service prompts OpenAI to generate/modify Spring Boot files, stores a GenerationBatch + one GenerationVersion per requirement + GeneratedFile rows.\n\nExpected output: 200 OK, { \"batchId\": <id>, \"versions\": [ {...GenerationVersion} ] }. Every AI response is screened by PromptSecurityService, ZipSecurityService, AiResponseValidator and SensitiveDataValidator before being trusted/stored."
+          },
+          "response": []
+        },
+        {
+          "name": "AI-2 Get Versions For Requirement",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{ai_suggestions_url}}/api/requirements/{{lastRequirementId}}/versions",
+              "host": [
+                "{{ai_suggestions_url}}"
+              ],
+              "path": [
+                "api",
+                "requirements",
+                "{{lastRequirementId}}",
+                "versions"
+              ]
+            },
+            "description": "Lists all GenerationVersion rows for a requirement, newest version number first."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Array returned', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "AI-3 Get Single Version",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{ai_suggestions_url}}/api/requirements/{{lastRequirementId}}/versions/{{lastVersionNumber}}",
+              "host": [
+                "{{ai_suggestions_url}}"
+              ],
+              "path": [
+                "api",
+                "requirements",
+                "{{lastRequirementId}}",
+                "versions",
+                "{{lastVersionNumber}}"
+              ]
+            },
+            "description": "Note: the path segment here is actually versionId (the DB row id), not versionNumber — the controller method is getVersion(requirementId, versionId). Using {{lastVersionNumber}} works only if version 1's id happens to equal 1; otherwise substitute the real version id from AI-2's response."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "AI-4 Get Files For Version",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{ai_suggestions_url}}/api/requirements/{{lastRequirementId}}/versions/{{lastVersionNumber}}/files",
+              "host": [
+                "{{ai_suggestions_url}}"
+              ],
+              "path": [
+                "api",
+                "requirements",
+                "{{lastRequirementId}}",
+                "versions",
+                "{{lastVersionNumber}}",
+                "files"
+              ]
+            },
+            "description": "Lists every GeneratedFile (path + content) belonging to a specific version, addressed by versionNumber this time."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Array returned', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "AI-5 Chat — Request A Code Change On A Version",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('New version number returned', () => pm.expect(j).to.have.property('versionNumber'));",
+                  "if (j.versionNumber) pm.collectionVariables.set('lastVersionNumber', j.versionNumber);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{ai_suggestions_url}}/api/requirements/{{lastRequirementId}}/versions/{{lastVersionNumber}}/chat",
+              "host": [
+                "{{ai_suggestions_url}}"
+              ],
+              "path": [
+                "api",
+                "requirements",
+                "{{lastRequirementId}}",
+                "versions",
+                "{{lastVersionNumber}}",
+                "chat"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Add basic input validation to the login endpoint.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Input (raw JSON): { \"message\": \"<free-text change request>\" }\n\nFeeds the current version's files + the message to OpenAI, asks for only the modified files, and creates a NEW GenerationVersion (parentVersion = old version, versionNumber + 1) with the resulting GeneratedFile rows.\n\nBoth the incoming message and the assembled prompt are checked by PromptSecurityService (prompt-injection guard) before being sent to OpenAI; the AI response is checked by AiResponseValidator and SensitiveDataValidator before being stored."
+          },
+          "response": []
+        },
+        {
+          "name": "AI-6 Download Version As ZIP",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Content-Type is octet-stream', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('octet-stream'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{ai_suggestions_url}}/api/requirements/{{lastRequirementId}}/versions/{{lastVersionNumber}}/download",
+              "host": [
+                "{{ai_suggestions_url}}"
+              ],
+              "path": [
+                "api",
+                "requirements",
+                "{{lastRequirementId}}",
+                "versions",
+                "{{lastVersionNumber}}",
+                "download"
+              ]
+            },
+            "description": "Downloads project.zip containing every GeneratedFile for this version, deduplicated by filePath."
+          },
+          "response": []
+        },
+        {
+          "name": "AI-7 Error — Generate From Match Missing projectZip",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 4xx/5xx', () => pm.expect(pm.response.code).to.be.oneOf([400,415,500]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{ai_suggestions_url}}/api/requirements/from-match",
+              "host": [
+                "{{ai_suggestions_url}}"
+              ],
+              "path": [
+                "api",
+                "requirements",
+                "from-match"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "report",
+                  "type": "file",
+                  "src": "{{aiSuggestionsReportPath}}"
+                }
+              ]
+            },
+            "description": "projectZip is deliberately omitted — Spring should reject the request since it's a required @RequestPart."
+          },
+          "response": []
+        },
+        {
+          "name": "AI-8 Error — Generate From Match With Empty Requirements Report",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is an error', () => pm.expect(pm.response.code).to.be.oneOf([400,500]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{ai_suggestions_url}}/api/requirements/from-match",
+              "host": [
+                "{{ai_suggestions_url}}"
+              ],
+              "path": [
+                "api",
+                "requirements",
+                "from-match"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "report",
+                  "type": "text",
+                  "value": "{\"requirementMatches\": []}"
+                },
+                {
+                  "key": "projectZip",
+                  "type": "file",
+                  "src": "{{zipFilePath}}"
+                }
+              ]
+            },
+            "description": "report has an empty requirementMatches array — GenerationException 'No requirements found in report.' is expected."
+          },
+          "response": []
+        },
+        {
+          "name": "AI-10 Download Full Batch As ZIP",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Content-Type is octet-stream', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('octet-stream'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{ai_suggestions_url}}/api/requirements/from-match/{{lastBatchId}}",
+              "host": [
+                "{{ai_suggestions_url}}"
+              ],
+              "path": [
+                "api",
+                "requirements",
+                "from-match",
+                "{{lastBatchId}}"
+              ]
+            },
+            "description": "Downloads generated-project.zip — one requirement-N/ folder per GenerationVersion in the batch, containing that version's GeneratedFile rows. This is the same endpoint documented in the project README's 'Download Generated Batch' section."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "10 — Sonar Analyzer (Security & Validation Tests) (port 8080)",
+      "item": [
+        {
+          "name": "1. Health check",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Service is UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{javaBaseUrl}}/api/health",
+              "host": [
+                "{{javaBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "health"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "2. Analyze - valid ZIP + valid projectName (happy path)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Handles both outcomes: 200 if no analysis is currently running,",
+                  "// or 409 if another analysis is already in progress (send this request",
+                  "// twice back-to-back to trigger the 409 case).",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('Status is 200 (no analysis running)', () => pm.response.to.have.status(200));",
+                  "  const json = pm.response.json();",
+                  "  pm.test('Response has jobId', () => pm.expect(json.jobId).to.exist);",
+                  "  if (json.jobId) { pm.collectionVariables.set('jobId', json.jobId); }",
+                  "} else if (pm.response.code === 409) {",
+                  "  pm.test('Status is 409 (analysis already in progress)', () => pm.response.to.have.status(409));",
+                  "  pm.test('Error message matches expected conflict message', () => {",
+                  "    pm.expect(pm.response.json().error).to.eql('An analysis is already in progress. Please wait for it to finish.');",
+                  "  });",
+                  "} else {",
+                  "  pm.test('Unexpected status code', () => pm.expect.fail(`Got unexpected status ${pm.response.code}`));",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "description": "Upload a real .zip project here",
+                  "value": ""
+                },
+                {
+                  "key": "projectName",
+                  "value": "Test_project_22",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{javaBaseUrl}}/api/analyze",
+              "host": [
+                "{{javaBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analyze"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "3. Analyze - no file uploaded",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Error message present', () => pm.expect(pm.response.json().error).to.exist);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "projectName",
+                  "value": "Test_project",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{javaBaseUrl}}/api/analyze",
+              "host": [
+                "{{javaBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analyze"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "4. Analyze - wrong extension (.rar renamed logic)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Rejected for extension', () => pm.expect(pm.response.json().error).to.include('ZIP'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "description": "Upload a file that does NOT end in .zip, e.g. project.rar",
+                  "value": ""
+                },
+                {
+                  "key": "projectName",
+                  "value": "Test_project",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{javaBaseUrl}}/api/analyze",
+              "host": [
+                "{{javaBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analyze"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "5. Analyze - fake ZIP (renamed .txt to .zip, fails magic-bytes check)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Rejected as not a valid ZIP archive', () => pm.expect(pm.response.json().error).to.eql('File is not a valid ZIP archive'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "description": "Take any .txt file, rename it to fake.zip, upload it here",
+                  "value": ""
+                },
+                {
+                  "key": "projectName",
+                  "value": "Test_project",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{javaBaseUrl}}/api/analyze",
+              "host": [
+                "{{javaBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analyze"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "6. Analyze - projectName with injection characters (should be rejected)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Rejected for invalid characters', () => pm.expect(pm.response.json().error).to.include('invalid characters'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "description": "Upload a real .zip file",
+                  "value": ""
+                },
+                {
+                  "key": "projectName",
+                  "value": "test`; rm -rf /; #",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{javaBaseUrl}}/api/analyze",
+              "host": [
+                "{{javaBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analyze"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "7. Analyze - projectName too long (>100 chars)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Rejected for length', () => pm.expect(pm.response.json().error).to.eql('Project name too long'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "description": "Upload a real .zip file",
+                  "value": ""
+                },
+                {
+                  "key": "projectName",
+                  "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{javaBaseUrl}}/api/analyze",
+              "host": [
+                "{{javaBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "analyze"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "8. Status - valid jobId format",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 404 (not a validation rejection)', () => pm.expect([200,404]).to.include(pm.response.code));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{javaBaseUrl}}/api/status/{{jobId}}",
+              "host": [
+                "{{javaBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "status",
+                "{{jobId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "9. Status - invalid jobId format (path traversal attempt)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Body reports NOT_FOUND', () => pm.expect(pm.response.json().status).to.eql('NOT_FOUND'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{javaBaseUrl}}/api/status/..%2F..%2Fetc%2Fpasswd",
+              "host": [
+                "{{javaBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "status",
+                "..%2F..%2Fetc%2Fpasswd"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "10. Status - invalid jobId (special characters)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{javaBaseUrl}}/api/status/abc123$(whoami)",
+              "host": [
+                "{{javaBaseUrl}}"
+              ],
+              "path": [
+                "api",
+                "status",
+                "abc123$(whoami)"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "matchingUrl",
+      "value": "http://localhost:8083"
+    },
+    {
+      "key": "pythonUrl",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "reqAnalyzerUrl",
+      "value": "http://localhost:8081"
+    },
+    {
+      "key": "zipFilePath",
+      "value": "/Users/yourname/Downloads/EzzyHub-TestProject.zip",
+      "description": "CHANGE THIS to the full local path of EzzyHub-TestProject.zip on your machine"
+    },
+    {
+      "key": "lastReportId",
+      "value": ""
+    },
+    {
+      "key": "lastCoverage",
+      "value": ""
+    },
+    {
+      "key": "lastTotalChunks",
+      "value": ""
+    },
+    {
+      "key": "pythonVersion",
+      "value": ""
+    },
+    {
+      "key": "code_analyzer_url",
+      "value": "http://localhost:8080",
+      "description": "Direct code-analyzer port. Was referenced by folder 3 but never defined in the original collection variables — Postman would have shown these requests hitting a blank host."
+    },
+    {
+      "key": "req_analyzer_url",
+      "value": "http://localhost:8081",
+      "description": "Direct requirement-analyzer port (mirrors reqAnalyzerUrl; some requests use this snake_case name instead)."
+    },
+    {
+      "key": "python_nlp_url",
+      "value": "http://localhost:8000",
+      "description": "Direct python NLP service port (mirrors pythonUrl; some requests use this snake_case name instead)."
+    },
+    {
+      "key": "gateway_url",
+      "value": "http://localhost:8085",
+      "description": "api-gateway's own port. All routes below are prefixed /api/<service>."
+    },
+    {
+      "key": "auth_url",
+      "value": "http://localhost:8087",
+      "description": "Direct auth-service port (bypassing the gateway)."
+    },
+    {
+      "key": "report_url",
+      "value": "http://localhost:8086",
+      "description": "Direct report-service port (bypassing the gateway)."
+    },
+    {
+      "key": "authToken",
+      "value": "",
+      "description": "JWT set automatically by Auth Service → AUTH-2 (Register) or AUTH-7 (Login). Used as Authorization: Bearer {{authToken}} by every protected Report Service request."
+    },
+    {
+      "key": "testUserEmail",
+      "value": "",
+      "description": "Set automatically by AUTH-2's pre-request script to a unique value per run."
+    },
+    {
+      "key": "testUserPassword",
+      "value": "",
+      "description": "Set automatically by AUTH-2's pre-request script (Password123!)."
+    },
+    {
+      "key": "testUserId",
+      "value": "",
+      "description": "Set automatically by AUTH-2 from the created user's id."
+    },
+    {
+      "key": "ai_suggestions_url",
+      "value": "http://localhost:8088",
+      "description": "AI-Suggestions (ezzyhubai) service port. NOTE: its own application.properties ships with server.port=8086, which COLLIDES with report-service (also 8086). Run it on 8088 instead (see README) to avoid the clash; this variable already points at 8088."
+    },
+    {
+      "key": "lastRequirementId",
+      "value": "",
+      "description": "Set automatically after creating/matching a requirement via AI-Suggestions, used by version/chat/download requests."
+    },
+    {
+      "key": "lastVersionNumber",
+      "value": "1",
+      "description": "Version number to use for download/files/chat requests against AI-Suggestions."
+    },
+    {
+      "key": "lastBatchId",
+      "value": "",
+      "description": "Set automatically by AI-9 (Generate From Match) — batchId returned in the response body, used by AI-10 (Download Batch)."
+    },
+    {
+      "key": "aiSuggestionsReportPath",
+      "value": "/Users/yourname/Downloads/match-report.json",
+      "description": "CHANGE THIS to the full local path of a matching-service report JSON (the 'report' multipart field for AI-9)."
+    },
+    {
+      "key": "javaBaseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "jobId",
+      "value": ""
+    }
+  ]
+}

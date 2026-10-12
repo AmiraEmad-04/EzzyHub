@@ -1,0 +1,1 @@
+The system shall perform optical character recognition on a scanned, image-only PDF to recover selectable, searchable text.

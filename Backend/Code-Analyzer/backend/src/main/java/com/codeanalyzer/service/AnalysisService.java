@@ -76,8 +76,10 @@ public class AnalysisService {
                 result.setProjectSummary(summary);
             } catch (Exception e) {
                 log.warn("[{}] Project summary failed: {}", id, e.getMessage());
+                // Generic message only — the underlying exception (which may embed a raw
+                // third-party LLM API error body) is logged above, not returned to the client.
                 SemanticAnalysis fallback = new SemanticAnalysis();
-                fallback.setSummary("Project summary failed: " + e.getMessage());
+                fallback.setSummary("Project summary is unavailable.");
                 result.setProjectSummary(fallback);
             }
 
@@ -92,7 +94,13 @@ public class AnalysisService {
         } catch (Exception e) {
             log.error("[{}] Fatal: {}", id, e.getMessage(), e);
             result.setStatus(result.getStructure() != null ? "partial" : "error");
-            result.setError(e.getMessage());
+            // IllegalArgumentException messages here are our own deliberate, safe
+            // validation text (e.g. size/entry-count/empty-zip checks) - safe to echo back.
+            // Anything else (IOException, provider errors, etc.) may carry internal details
+            // (file paths, raw API bodies) and is logged above rather than returned.
+            result.setError(e instanceof IllegalArgumentException
+                    ? e.getMessage()
+                    : "Analysis failed due to an internal error while processing the file.");
         } finally {
             zipExtractorService.cleanup(tmp);
             result.setProcessingTimeMs(System.currentTimeMillis() - start);

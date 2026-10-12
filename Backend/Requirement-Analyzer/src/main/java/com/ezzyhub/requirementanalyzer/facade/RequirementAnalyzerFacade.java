@@ -124,6 +124,12 @@ public class RequirementAnalyzerFacade {
         log.debug("--- Phase 4: Python microservice /embed ---");
         PythonNlpClient.EmbedResult embedResult = pythonNlpClient.embed(reqText, keywords);
 
+        // [DIAG] Temporary: print vector length and first 5 values to confirm 768 vs 384/zeros
+        float[] _diagVec = embedResult.sentenceEmbedding();
+        log.info("[DIAG] Python /embed returned: length={}, first5={}",
+                _diagVec.length,
+                java.util.Arrays.copyOf(_diagVec, Math.min(5, _diagVec.length)));
+
         float[] sentenceEmbedding           = embedResult.sentenceEmbedding();
         Map<String, float[]> wordEmbeddings = embedResult.wordEmbeddings();
 

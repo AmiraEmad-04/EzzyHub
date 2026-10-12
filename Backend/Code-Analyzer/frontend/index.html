@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+    <title>CodeLens — Semantic Analyzer</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;1,400&family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet"/>
+    <style>
+        :root{
+          --g:#C9A84C;--gl:#E8CB7A;--gd:#8A6A28;--gg:rgba(201,168,76,.13);--gline:rgba(201,168,76,.25);
+          --bk:#070707;--bk1:#0C0C0C;--bk2:#111;--bkh:#181818;--bd:#1C1C1C;--bd2:#282828;
+          --tx:#E8E0CE;--txd:#6A6058;--txm:#A89878;
+          --green:#4CAF50;--grl:rgba(76,175,80,.3);--grb:rgba(76,175,80,.07);
+          --red:#EF5350;--rdl:rgba(239,83,80,.3);--rdb:rgba(239,83,80,.07);
+          --blue:#42A5F5;--blul:rgba(66,165,245,.3);--blub:rgba(66,165,245,.07);
+          --purple:#AB47BC;--purl:rgba(171,71,188,.3);--purb:rgba(171,71,188,.07);
+          --amber:#FFA726;--aml:rgba(255,167,38,.3);
+          --fd:'Cinzel',serif;--fm:'IBM Plex Mono',monospace;--fb:'Cormorant Garamond',serif;
+          --r:3px;--rl:7px;--t:.2s cubic-bezier(.4,0,.2,1);
+        }
+        *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+        html{font-size:16px;scroll-behavior:smooth}
+        body{background:var(--bk);color:var(--tx);font-family:var(--fb);font-size:1.05rem;line-height:1.75;min-height:100vh;overflow-x:hidden}
+        ::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:var(--bk)}::-webkit-scrollbar-thumb{background:var(--gd);border-radius:3px}
+
+        /* HEADER */
+        header{padding:1.5rem 2.5rem;border-bottom:1px solid var(--gline);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;backdrop-filter:blur(14px);background:rgba(7,7,7,.93)}
+        .logo{display:flex;align-items:center;gap:.9rem}
+        .gem{width:36px;height:36px;border:1px solid var(--g);transform:rotate(45deg);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+        .gem span{transform:rotate(-45deg);font-size:1rem;color:var(--g)}
+        .logo h1{font-family:var(--fd);font-size:1.35rem;font-weight:600;letter-spacing:.18em;color:var(--g);text-transform:uppercase}
+        .logo small{display:block;font-family:var(--fm);font-size:.58rem;color:var(--txd);letter-spacing:.2em;text-transform:uppercase}
+        .hstat{display:flex;align-items:center;gap:.5rem;font-family:var(--fm);font-size:.68rem;color:var(--txd);padding:.28rem .8rem;border:1px solid var(--bd);border-radius:20px}
+        .dot{width:7px;height:7px;border-radius:50%;background:#444;transition:var(--t)}
+        .dot.on{background:var(--green);box-shadow:0 0 7px var(--green)}
+        .dot.err{background:var(--red);box-shadow:0 0 7px var(--red)}
+
+        /* MAIN */
+        main{max-width:1400px;margin:0 auto;padding:2.5rem 2.5rem 8rem}
+
+        /* UPLOAD */
+        #upload{max-width:720px;margin:0 auto 3.5rem;text-align:center}
+        .eyebrow{font-family:var(--fm);font-size:.6rem;letter-spacing:.35em;color:var(--gd);text-transform:uppercase;margin-bottom:.9rem}
+        .htitle{font-family:var(--fd);font-size:2.3rem;font-weight:400;color:var(--tx);margin-bottom:.35rem}
+        .htitle em{color:var(--g);font-style:normal}
+        .hsub{font-size:.98rem;color:var(--txd);font-style:italic;margin-bottom:2.2rem}
+        .dz{position:relative;border:1px dashed var(--gline);border-radius:var(--rl);padding:3rem 2rem;cursor:pointer;transition:var(--t);background:var(--bk1);overflow:hidden}
+        .dz::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 50% 0%,var(--gg),transparent 65%);opacity:0;transition:var(--t)}
+        .dz:hover,.dz.over{border-color:var(--g);border-style:solid}
+        .dz:hover::before,.dz.over::before{opacity:1}
+        #fi{display:none}
+        .dz-c{position:relative;z-index:1;pointer-events:none}
+        .dz-ico{font-size:2.5rem;display:block;margin-bottom:.8rem;animation:bob 3s ease-in-out infinite}
+        @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+        .dz-t{font-family:var(--fd);font-size:1rem;color:var(--g);letter-spacing:.1em;margin-bottom:.3rem}
+        .dz-h{font-family:var(--fm);font-size:.68rem;color:var(--txd)}
+        .fpill{display:none;align-items:center;gap:.7rem;margin:1rem auto 0;padding:.5rem 1rem;background:var(--bk2);border:1px solid var(--gline);border-radius:var(--r);font-family:var(--fm);font-size:.72rem;color:var(--g);max-width:600px}
+        .fpill.show{display:flex}
+        .fn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .fs{color:var(--txd);flex-shrink:0}
+        .fx{background:none;border:none;cursor:pointer;color:var(--txd);font-size:.9rem;transition:var(--t)}
+        .fx:hover{color:var(--red)}
+        .cfgrow{display:flex;align-items:center;gap:.6rem;max-width:600px;margin:.9rem auto 0;font-family:var(--fm);font-size:.68rem}
+        .cfgl{color:var(--txd);white-space:nowrap}
+        .cfgi{flex:1;background:var(--bk2);border:1px solid var(--bd);border-radius:var(--r);padding:.3rem .65rem;color:var(--gl);font-family:var(--fm);font-size:.68rem;transition:var(--t)}
+        .cfgi:focus{outline:none;border-color:var(--gd)}
+        .btn-go{margin-top:1.5rem;padding:.75rem 3rem;font-family:var(--fd);font-size:.84rem;letter-spacing:.15em;text-transform:uppercase;color:#080808;background:linear-gradient(135deg,var(--gd) 0%,var(--g) 45%,var(--gl) 55%,var(--g) 100%);border:none;border-radius:var(--r);cursor:pointer;position:relative;overflow:hidden;transition:var(--t)}
+        .btn-go::after{content:'';position:absolute;inset:0;background:linear-gradient(120deg,transparent 30%,rgba(255,255,255,.18) 50%,transparent 70%);transform:translateX(-100%);transition:transform .45s}
+        .btn-go:hover::after{transform:translateX(100%)}
+        .btn-go:hover{box-shadow:0 0 28px rgba(201,168,76,.4)}
+        .btn-go:disabled{opacity:.3;cursor:not-allowed;pointer-events:none}
+
+        /* PROGRESS */
+        #prog{display:none;max-width:680px;margin:0 auto 2.5rem}
+        #prog.show{display:block}
+        .prog-info{font-family:var(--fm);font-size:.72rem;color:var(--txd);margin-bottom:.75rem;text-align:center}
+        .ps-wrap{display:flex;flex-direction:column;gap:.5rem}
+        .ps{display:flex;align-items:center;gap:.9rem;padding:.75rem 1.1rem;background:var(--bk1);border:1px solid var(--bd);border-radius:var(--r);font-family:var(--fm);font-size:.72rem;color:var(--txd);transition:var(--t)}
+        .ps.act{border-color:var(--gline);color:var(--g);background:rgba(201,168,76,.03)}
+        .ps.done{border-color:var(--grl);color:var(--green)}
+        .psn{min-width:20px;text-align:center}
+        .spin{width:14px;height:14px;border:1.5px solid var(--gd);border-top-color:var(--g);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
+        @keyframes spin{to{transform:rotate(360deg)}}
+
+        /* BANNERS */
+        .banner{display:none;align-items:flex-start;gap:.8rem;padding:.85rem 1.2rem;border-radius:var(--r);font-family:var(--fm);font-size:.73rem;margin-bottom:1.2rem}
+        .banner.show{display:flex}
+        .bn-err{background:var(--rdb);border:1px solid var(--rdl);color:#ef9a9a}
+        .bn-warn{background:rgba(255,167,38,.07);border:1px solid var(--aml);color:#ffcc80}
+
+        /* DIVIDER */
+        .div{display:flex;align-items:center;gap:1.2rem;margin:2.2rem 0 1.8rem;color:var(--gd);font-family:var(--fm);font-size:.58rem;letter-spacing:.35em;text-transform:uppercase}
+        .div::before,.div::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,transparent,var(--gline),transparent)}
+
+        /* RESULTS */
+        #results{display:none}
+        #results.show{display:block}
+
+        /* Summary bar */
+        .sumbar{background:var(--bk1);border:1px solid var(--bd);border-radius:var(--rl);padding:1.5rem 1.75rem;margin-bottom:1.5rem}
+        .sumbar-top{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:1rem;margin-bottom:1rem}
+        .proj-type{font-family:var(--fm);font-size:.6rem;color:var(--gd);text-transform:uppercase;letter-spacing:.2em;margin-bottom:.3rem}
+        .proj-name{font-family:var(--fd);font-size:1.75rem;color:var(--g);font-weight:400}
+        .proj-stack{font-family:var(--fm);font-size:.72rem;color:var(--txm);margin-top:.3rem}
+        .sum-meta{font-family:var(--fm);font-size:.65rem;color:var(--txd);text-align:right;line-height:1.9}
+        .sum-meta b{color:var(--txm);font-weight:400}
+        .proj-purpose{font-size:1rem;color:var(--tx);font-style:italic;line-height:1.75;border-top:1px solid var(--bd);padding-top:1rem}
+
+        /* Stats row */
+        .srow{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:1px;margin-bottom:1.5rem;border:1px solid var(--bd);border-radius:var(--rl);overflow:hidden}
+        .sc{background:var(--bk1);padding:1rem .85rem;text-align:center;transition:var(--t)}
+        .sc:hover{background:var(--bkh)}
+        .scv{font-family:var(--fd);font-size:1.6rem;color:var(--g);display:block}
+        .scl{font-family:var(--fm);font-size:.56rem;color:var(--txd);letter-spacing:.12em;text-transform:uppercase;margin-top:.15rem}
+
+        /* Toolbar */
+        .toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.75rem}
+        .toolbar-left{font-family:var(--fm);font-size:.7rem;color:var(--txd)}
+        .toolbar-left strong{color:var(--gp, var(--g))}
+        .toolbar-right{display:flex;gap:.5rem;flex-wrap:wrap}
+        .btn-sm{padding:.35rem .9rem;font-family:var(--fm);font-size:.65rem;letter-spacing:.08em;border:1px solid var(--bd);border-radius:var(--r);cursor:pointer;background:var(--bk1);color:var(--txm);transition:var(--t)}
+        .btn-sm:hover{border-color:var(--gd);color:var(--g)}
+        .btn-sm.active{border-color:var(--g);color:var(--g);background:var(--gg)}
+
+        /* Search */
+        .search-row{margin-bottom:1rem}
+        .search-input{width:100%;background:var(--bk1);border:1px solid var(--bd);border-radius:var(--r);padding:.5rem 1rem;color:var(--tx);font-family:var(--fm);font-size:.75rem;transition:var(--t)}
+        .search-input:focus{outline:none;border-color:var(--gd)}
+        .search-input::placeholder{color:var(--txd)}
+
+        /* FILE CARDS */
+        .file-card{background:var(--bk1);border:1px solid var(--bd);border-radius:var(--rl);margin-bottom:.75rem;overflow:hidden;transition:var(--t)}
+        .file-card:hover{border-color:var(--bd2)}
+        .fc-head{display:flex;align-items:center;gap:.75rem;padding:.8rem 1.1rem;cursor:pointer;transition:var(--t);user-select:none}
+        .fc-head:hover{background:rgba(201,168,76,.03)}
+        .fc-lang{font-family:var(--fm);font-size:.58rem;padding:.12rem .5rem;border-radius:2px;border:1px solid;flex-shrink:0;white-space:nowrap}
+        .fc-path{font-family:var(--fm);font-size:.72rem;color:var(--g);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .fc-role{font-size:.88rem;color:var(--txm);font-style:italic;flex:2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .fc-counts{font-family:var(--fm);font-size:.58rem;color:var(--txd);flex-shrink:0;white-space:nowrap}
+        .fc-arr{color:var(--gd);font-size:.7rem;flex-shrink:0;transition:transform var(--t)}
+        .fc-arr.open{transform:rotate(90deg)}
+        .fc-body{display:none;border-top:1px solid var(--bd)}
+        .fc-body.open{display:block}
+
+        /* Semantic role banner */
+        .role-banner{padding:.65rem 1.1rem;background:rgba(201,168,76,.04);border-bottom:1px solid var(--bd);font-size:.92rem;color:var(--tx);font-style:italic}
+        .role-banner strong{font-family:var(--fm);font-size:.6rem;color:var(--gd);text-transform:uppercase;letter-spacing:.12em;font-style:normal;margin-right:.5rem}
+
+        /* Dependencies strip */
+        .dep-strip{display:flex;flex-wrap:wrap;gap:.3rem;padding:.55rem 1.1rem;border-bottom:1px solid var(--bd);background:rgba(0,0,0,.15)}
+        .dep-tag{font-family:var(--fm);font-size:.58rem;padding:.1rem .45rem;border:1px solid var(--blul);color:#90caf9;background:var(--blub);border-radius:2px}
+
+        /* CLASS BLOCK */
+        .class-block{border-bottom:1px solid var(--bd)}
+        .class-block:last-child{border-bottom:none}
+        .cb-head{display:flex;align-items:center;gap:.65rem;padding:.65rem 1.1rem;background:rgba(171,71,188,.03);border-bottom:1px solid var(--bd)}
+        .cb-kind{font-family:var(--fm);font-size:.55rem;padding:.1rem .4rem;border:1px solid var(--purl);color:#ce93d8;border-radius:2px;flex-shrink:0}
+        .cb-name{font-family:var(--fm);font-size:.8rem;color:var(--gl);font-weight:500}
+        .cb-ext{font-family:var(--fm);font-size:.65rem;color:var(--txd)}
+        .cb-ext em{color:var(--gd);font-style:normal}
+        .cb-meaning{padding:.6rem 1.1rem;font-size:.9rem;color:var(--tx);line-height:1.7;background:rgba(0,0,0,.12);border-bottom:1px solid var(--bd)}
+        .cb-meaning strong{font-family:var(--fm);font-size:.58rem;color:var(--gd);text-transform:uppercase;letter-spacing:.1em;display:block;margin-bottom:.3rem}
+
+        /* METHOD TABLE */
+        .mtable{width:100%;border-collapse:collapse}
+        .mtable tr{border-bottom:1px solid var(--bd);transition:var(--t)}
+        .mtable tr:last-child{border-bottom:none}
+        .mtable tr:hover{background:var(--bkh)}
+        .mtable td{padding:.55rem .9rem;vertical-align:top;line-height:1.55}
+        .mt-left{width:200px}
+        .mt-sig{font-family:var(--fm);font-size:.68rem;color:var(--gl);word-break:break-all}
+        .mt-badges{display:flex;flex-wrap:wrap;gap:.25rem;margin-top:.25rem}
+        .badge{font-family:var(--fm);font-size:.52rem;padding:.08rem .35rem;border-radius:2px;border:1px solid}
+        .b-pub{border-color:var(--grl);color:#81c784;background:var(--grb)}
+        .b-prv{border-color:var(--rdl);color:#ef9a9a;background:var(--rdb)}
+        .b-pro{border-color:var(--aml);color:#ffcc80;background:rgba(255,167,38,.07)}
+        .b-exp{border-color:var(--blul);color:#90caf9;background:var(--blub)}
+        .b-mod{border-color:var(--bd);color:var(--txd);background:transparent}
+        .mt-meaning{font-size:.9rem;color:var(--tx);line-height:1.65}
+
+        /* Section header inside file */
+        .sec-hdr{font-family:var(--fm);font-size:.6rem;color:var(--gd);text-transform:uppercase;letter-spacing:.15em;padding:.5rem 1.1rem;border-bottom:1px solid var(--bd);background:rgba(0,0,0,.18)}
+
+        /* Fade */
+        .fi{animation:fadein .45s ease both}
+        .fi1{animation-delay:.05s}.fi2{animation-delay:.1s}.fi3{animation-delay:.15s}.fi4{animation-delay:.2s}
+        @keyframes fadein{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+        .nd{font-family:var(--fm);font-size:.7rem;color:var(--txd);font-style:italic}
+
+        @media(max-width:760px){main{padding:1.5rem 1rem 5rem}header{padding:1rem 1.25rem}.htitle{font-size:1.75rem}.fc-role{display:none}}
+    </style>
+</head>
+<body>
+<header>
+    <div class="logo">
+        <div class="gem"><span>◈</span></div>
+        <div><h1>CodeLens</h1><small>Semantic Analyzer</small></div>
+    </div>
+    <div class="hstat"><span class="dot" id="dot"></span><span id="stxt">Connecting…</span></div>
+</header>
+
+<main>
+    <!-- UPLOAD -->
+    <section id="upload">
+        <p class="eyebrow">Code Semantic Analysis Engine</p>
+        <h2 class="htitle">Understand What Your <em>Code Does</em></h2>
+        <p class="hsub">Upload a ZIP — get semantic meaning of every file, class, and method</p>
+
+        <div class="dz" id="dz" onclick="document.getElementById('fi').click()">
+            <input type="file" id="fi" accept=".zip,.tar.gz,.tgz"/>
+            <div class="dz-c">
+                <span class="dz-ico">⬡</span>
+                <p class="dz-t">Drop your project ZIP here</p>
+                <p class="dz-h">click to browse · .zip .tar.gz .tgz</p>
+            </div>
+        </div>
+
+        <div class="fpill" id="fpill">
+            <span>📦</span><span class="fn" id="fname"></span>
+            <span class="fs" id="fsize"></span>
+            <button class="fx" onclick="clearF(event)">✕</button>
+        </div>
+        <div class="cfgrow">
+            <span class="cfgl">BACKEND URL</span>
+            <input class="cfgi" id="burl" type="text" value="http://localhost:8080"/>
+            <!-- NOTE: default port is 8080 to match backend application.properties -->
+        </div>
+        <br/>
+        <button class="btn-go" id="btngo" onclick="run()" disabled>⬡ &nbsp;Analyze Semantics</button>
+    </section>
+
+    <!-- PROGRESS -->
+    <section id="prog">
+        <div class="prog-info" id="progInfo">Analyzing…</div>
+        <div class="ps-wrap">
+            <div class="ps" id="s1"><span class="psn">①</span><span>Extracting ZIP & mapping structure</span></div>
+            <div class="ps" id="s2"><span class="psn">②</span><span>Generating project summary</span></div>
+            <div class="ps" id="s3"><span class="psn">③</span><span>Analyzing file semantics (batched)</span></div>
+            <div class="ps" id="s4"><span class="psn">④</span><span>Compiling semantic report</span></div>
+        </div>
+    </section>
+
+    <!-- BANNERS -->
+    <div class="banner bn-err" id="errB">⚠ <span id="errT"></span></div>
+    <div class="banner bn-warn" id="warnB">⚠ <span id="warnT"></span></div>
+
+    <!-- RESULTS -->
+    <section id="results">
+
+        <!-- Project summary -->
+        <div class="sumbar fi fi1" id="sumbar">
+            <div class="sumbar-top">
+                <div>
+                    <div class="proj-type" id="rtype"></div>
+                    <div class="proj-name" id="rname"></div>
+                    <div class="proj-stack" id="rstack"></div>
+                </div>
+                <div>
+                    <div class="sum-meta" id="rmeta"></div>
+                    <button class="btn-sm" style="margin-top:.5rem;float:right" onclick="exportJ()">⬡ Export JSON</button>
+                </div>
+            </div>
+            <div class="proj-purpose" id="rpurpose"></div>
+        </div>
+
+        <!-- Stats -->
+        <div class="srow fi fi2" id="srow"></div>
+
+        <div class="div">Semantic Analysis — Files · Classes · Methods</div>
+
+        <!-- Toolbar -->
+        <div class="toolbar fi fi3">
+            <div class="toolbar-left">
+                <strong id="fileCount">0</strong> files analyzed · click any file to expand
+            </div>
+            <div class="toolbar-right">
+                <button class="btn-sm" onclick="expandAll()">Expand All</button>
+                <button class="btn-sm" onclick="collapseAll()">Collapse All</button>
+                <button class="btn-sm" onclick="filterFailed()">Show Issues Only</button>
+            </div>
+        </div>
+
+        <!-- Search -->
+        <div class="search-row fi fi3">
+            <input class="search-input" id="searchInput" type="text" placeholder="Search files, classes, methods, semantic meanings…" oninput="filterCards()"/>
+        </div>
+
+        <!-- File cards container -->
+        <div id="cards" class="fi fi4"></div>
+
+    </section>
+</main>
+
+<script>
+    let selFile=null, lastResult=null, stTimer=null, stIdx=0;
+    const STEPS=['s1','s2','s3','s4'];
+
+    const LANG_COLORS={
+      TypeScript:['#3178c6','rgba(49,120,198,.3)'],
+      JavaScript:['#f7df1e','rgba(247,223,30,.35)'],
+      Java:['#f89820','rgba(248,152,32,.3)'],
+      Python:['#3572a5','rgba(53,114,165,.3)'],
+      Go:['#00add8','rgba(0,173,216,.3)'],
+      Rust:['#dea584','rgba(222,165,132,.3)'],
+      Kotlin:['#a97bff','rgba(169,123,255,.3)'],
+      'C#':['#178600','rgba(23,134,0,.3)'],
+    };
+
+    document.addEventListener('DOMContentLoaded',()=>{
+      ping(); setInterval(ping,30000);
+      document.getElementById('fi').addEventListener('change',e=>{ if(e.target.files[0]) pick(e.target.files[0]); });
+      document.getElementById('burl').addEventListener('change',ping);
+      const dz=document.getElementById('dz');
+      dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('over');});
+      dz.addEventListener('dragleave',()=>dz.classList.remove('over'));
+      dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('over');if(e.dataTransfer.files[0])pick(e.dataTransfer.files[0]);});
+    });
+
+    async function ping(){
+      const url=document.getElementById('burl').value.trim();
+      const dot=document.getElementById('dot'),txt=document.getElementById('stxt');
+      try{
+        const r=await fetch(`${url}/api/v1/health`,{signal:AbortSignal.timeout(5000)});
+        if(!r.ok)throw 0;
+        const d=await r.json();
+        dot.className='dot on';
+        txt.textContent=`Online · ${d.llmProvider||'?'} / ${d.llmModel||'?'} · ${d.llmConfigured?'✓ ready':'⚠ key missing'}`;
+      }catch{dot.className='dot err';txt.textContent='Backend offline';}
+    }
+
+    function pick(f){
+      selFile=f;
+      document.getElementById('fname').textContent=f.name;
+      document.getElementById('fsize').textContent=fmtB(f.size);
+      document.getElementById('fpill').classList.add('show');
+      document.getElementById('btngo').disabled=false;
+    }
+    function clearF(e){e.stopPropagation();selFile=null;document.getElementById('fpill').classList.remove('show');document.getElementById('fi').value='';document.getElementById('btngo').disabled=true;}
+    function fmtB(b){return b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB';}
+
+    async function run(){
+      if(!selFile)return;
+      const base=document.getElementById('burl').value.trim();
+      hide('results');hide('errB');hide('warnB');
+      document.getElementById('upload').style.opacity='0.4';
+      document.getElementById('upload').style.pointerEvents='none';
+      show('prog'); initSteps(); activateStep(0);
+
+      // Steps 1→3 use timed estimates; step 4 fires only when the response actually arrives.
+      // Delays are conservative so they don't outrun the real work on large projects.
+      const stepDelays = [5000, 12000, 25000]; // advance step 1 done, 2 done, 3 done
+      const stepTimers = stepDelays.map((delay, i) => setTimeout(() => {
+        doneStep(i);
+        if (i + 1 < STEPS.length - 1) activateStep(i + 1); // activate 2nd and 3rd only
+      }, delay));
+      // Activate step 3 spinner shortly after step 2 done timer fires
+      const s3Timer = setTimeout(() => activateStep(2), stepDelays[1] + 200);
+
+      try{
+        const fd=new FormData();fd.append('file',selFile);
+        const res=await fetch(`${base}/api/v1/analyze`,{method:'POST',body:fd});
+        const data=await res.json();
+        if(!res.ok)throw new Error(data.message||`Server ${res.status}`);
+        lastResult=data;
+        // Cancel pending timers and complete all steps before rendering
+        stepTimers.forEach(clearTimeout); clearTimeout(s3Timer);
+        finishAllSteps();
+        render(data);
+      }catch(e){
+        stepTimers.forEach(clearTimeout); clearTimeout(s3Timer);
+        document.getElementById('errT').textContent=e.message||String(e);
+        show('errB');
+      }finally{
+        document.getElementById('upload').style.opacity='1';
+        document.getElementById('upload').style.pointerEvents='auto';
+        setTimeout(()=>hide('prog'),900);
+      }
+    }
+
+    function initSteps(){
+      stIdx=0;
+      STEPS.forEach((id,i)=>{
+        const el=document.getElementById(id); el.className='ps';
+        // Restore spinner back to number if it was left as a spinner from a prior run
+        const sp=el.querySelector('.spin');
+        if(sp){const n=document.createElement('span');n.className='psn';n.textContent=['①','②','③','④'][i];sp.replaceWith(n);}
+        else{const psn=el.querySelector('.psn');if(psn)psn.textContent=['①','②','③','④'][i];}
+      });
+    }
+    function activateStep(i){
+      if(i>=STEPS.length)return;
+      const el=document.getElementById(STEPS[i]); el.classList.add('act'); el.classList.remove('done');
+      const n=el.querySelector('.psn');
+      if(n){const sp=document.createElement('span');sp.className='spin';n.replaceWith(sp);}
+    }
+    function doneStep(i){
+      if(i>=STEPS.length)return;
+      const el=document.getElementById(STEPS[i]); el.classList.remove('act'); el.classList.add('done');
+      const sp=el.querySelector('.spin');
+      if(sp){const n=document.createElement('span');n.className='psn';n.textContent='✓';sp.replaceWith(n);}
+    }
+    function finishAllSteps(){ STEPS.forEach((_,i)=>doneStep(i)); }
+
+    function render(d){
+      const ps  = d.projectSummary || {};
+      const str = d.structure      || {};
+      const stats = str.stats      || {};
+      const fas = d.fileAnalyses   || [];
+
+      if(d.error) setBanner('warnB','warnT', d.error);
+
+      // Summary bar
+      document.getElementById('rtype').textContent    = ps.projectType    || 'Software Project';
+      document.getElementById('rname').textContent    = d.projectName     || 'Analysis Result';
+      document.getElementById('rstack').textContent   = ps.technicalStack ? '⬡ ' + ps.technicalStack : '';
+      document.getElementById('rpurpose').textContent = ps.mainPurpose || ps.summary || 'See file analyses below for semantic details.';
+      document.getElementById('rmeta').innerHTML =
+        `<b>Provider</b> ${d.llmProvider||'—'} / ${d.llmModel||'—'}<br>`+
+        `<b>Files analyzed</b> ${d.analyzedFileCount||fas.length} of ${d.totalSourceFiles||'?'}<br>`+
+        `<b>Time</b> ${d.processingTimeMs?(d.processingTimeMs/1000).toFixed(1)+'s':'—'}<br>`+
+        `<b>Status</b> ${d.status||'—'}`;
+      document.querySelectorAll('.sum-meta b').forEach(b=>b.style.cssText='color:var(--txm);font-weight:400;font-size:.62rem;');
+
+      // Stats
+      const langC = Object.keys(stats.languageDistribution||{}).length;
+      document.getElementById('srow').innerHTML=[
+        {v:stats.totalFiles||0,         l:'Total Files'},
+        {v:stats.totalDirectories||0,   l:'Directories'},
+        {v:langC,                       l:'Languages'},
+        {v:d.totalSourceFiles||0,       l:'Source Files'},
+        {v:d.analyzedFileCount||fas.length, l:'Analyzed'},
+        {v:fas.reduce((s,f)=>(s+(f.classes||[]).length),0), l:'Classes'},
+        {v:fas.reduce((s,f)=>(s+(f.classes||[]).reduce((ss,c)=>ss+(c.methods||[]).length,0)+(f.moduleFunctions||[]).length),0), l:'Methods'},
+      ].map(s=>`<div class="sc"><span class="scv">${s.v}</span><span class="scl">${s.l}</span></div>`).join('');
+
+      // File count
+      document.getElementById('fileCount').textContent = fas.length;
+
+      // Build file cards
+      buildCards(fas);
+
+      show('results');
+      setTimeout(()=>document.getElementById('results').scrollIntoView({behavior:'smooth',block:'start'}),300);
+    }
+
+    function buildCards(fas){
+      const container = document.getElementById('cards');
+      container.innerHTML = fas.map((fa,i) => fileCard(fa, i<3)).join('');
+      // Wire accordions
+      container.querySelectorAll('.fc-head').forEach(h=>{
+        h.addEventListener('click',()=>{
+          const arr = h.querySelector('.fc-arr');
+          arr.classList.toggle('open');
+          h.nextElementSibling.classList.toggle('open');
+        });
+      });
+    }
+
+    function fileCard(fa, openByDefault){
+      const lang = fa.language || 'Unknown';
+      const [lc,lb] = LANG_COLORS[lang] || ['#888','rgba(136,136,136,.3)'];
+      const classes = fa.classes || [];
+      const tlf     = fa.moduleFunctions || [];
+      const deps    = fa.dependencies    || [];
+      const methCount = classes.reduce((s,c)=>s+(c.methods||[]).length,0) + tlf.length;
+      const oc = openByDefault ? 'open' : '';
+
+      return `<div class="file-card" data-path="${esc(fa.filePath||'')}">
+        <div class="fc-head">
+          <span class="fc-lang" style="color:${lc};border-color:${lb};background:${lb.replace(/[\d.]+\)$/,'0.07)')}">${lang}</span>
+          <span class="fc-path" title="${esc(fa.filePath||'')}">${esc(fa.fileName||fa.filePath||'?')}</span>
+          <span class="fc-role">${esc(fa.semanticRole||'')}</span>
+          <span class="fc-counts">${classes.length}C · ${methCount}M</span>
+          <span class="fc-arr ${oc}">▶</span>
+        </div>
+        <div class="fc-body ${oc}">
+          ${fa.semanticRole ? `<div class="role-banner"><strong>File Role</strong>${esc(fa.semanticRole)}</div>` : ''}
+          ${deps.length ? `<div class="dep-strip">${deps.slice(0,15).map(d=>`<span class="dep-tag">${esc(d)}</span>`).join('')}</div>` : ''}
+          ${classes.map(c=>classBlock(c)).join('')}
+          ${tlf.length ? `<div class="sec-hdr">Module-Level Functions (${tlf.length})</div>${methodTable(tlf)}` : ''}
+          ${!classes.length && !tlf.length ? `<div style="padding:.75rem 1.1rem" class="nd">No classes or functions extracted.</div>` : ''}
+        </div>
+      </div>`;
+    }
+
+    function classBlock(cls){
+      const methods = cls.methods || [];
+      const fields  = cls.fields  || [];
+      const ext = cls.extendsFrom ? `extends <em>${esc(cls.extendsFrom)}</em>` : '';
+      const impl= (cls.implements_||[]).length ? `implements <em>${cls.implements_.map(esc).join(', ')}</em>` : '';
+      return `<div class="class-block">
+        <div class="cb-head">
+          <span class="cb-kind">${esc(cls.kind||'class')}</span>
+          <span class="cb-name">${esc(cls.name||'?')}</span>
+          ${ext||impl ? `<span class="cb-ext">${[ext,impl].filter(Boolean).join(' · ')}</span>` : ''}
+        </div>
+        ${cls.semanticMeaning ? `<div class="cb-meaning"><strong>Semantic Meaning</strong>${esc(cls.semanticMeaning)}</div>` : ''}
+        ${fields.length ? fieldStrip(fields) : ''}
+        ${methods.length ? methodTable(methods) : ''}
+      </div>`;
+    }
+
+    function fieldStrip(fields){
+      return `<div style="padding:.5rem 1.1rem;border-bottom:1px solid var(--bd);display:flex;flex-wrap:wrap;gap:.3rem">
+        ${fields.map(f=>`<span title="${esc(f.semanticMeaning||'')}" style="font-family:var(--fm);font-size:.6rem;padding:.1rem .45rem;border:1px solid var(--bd);border-radius:2px;color:var(--txm)">${esc(f.visibility||'')} ${esc(f.name||'')}${f.type?': '+esc(f.type):''}</span>`).join('')}
+      </div>`;
+    }
+
+    function methodTable(methods){
+      return `<table class="mtable"><tbody>${methods.map(m=>`
+        <tr>
+          <td class="mt-left">
+            <div class="mt-sig">${esc(m.signature||m.name||'?')}</div>
+            <div class="mt-badges">
+              <span class="badge ${visCls(m.visibility)}">${esc(m.visibility||'?')}</span>
+              ${m.isAsync  ? '<span class="badge b-mod">async</span>'  : ''}
+              ${m.isStatic ? '<span class="badge b-mod">static</span>' : ''}
+              ${m.returnType ? `<span class="badge b-mod">${esc(m.returnType)}</span>` : ''}
+            </div>
+          </td>
+          <td><div class="mt-meaning">${esc(m.semanticMeaning||'—')}</div></td>
+        </tr>`).join('')}</tbody></table>`;
+    }
+
+    function visCls(v){
+      if(!v)return '';
+      const l=v.toLowerCase();
+      if(l.includes('pub')||l==='export')return 'b-pub';
+      if(l.includes('priv'))return 'b-prv';
+      if(l.includes('pro'))return 'b-pro';
+      if(l==='export')return 'b-exp';
+      return 'b-mod';
+    }
+
+    function filterCards(){
+      const q = document.getElementById('searchInput').value.toLowerCase();
+      document.querySelectorAll('.file-card').forEach(card=>{
+        card.style.display = !q || card.textContent.toLowerCase().includes(q) ? '' : 'none';
+      });
+    }
+
+    function expandAll(){
+      document.querySelectorAll('.fc-head').forEach(h=>{ h.querySelector('.fc-arr').classList.add('open'); h.nextElementSibling.classList.add('open'); });
+    }
+    function collapseAll(){
+      document.querySelectorAll('.fc-head').forEach(h=>{ h.querySelector('.fc-arr').classList.remove('open'); h.nextElementSibling.classList.remove('open'); });
+    }
+    function filterFailed(){
+      document.querySelectorAll('.file-card').forEach(card=>{
+        const failed = card.textContent.toLowerCase().includes('analysis failed');
+        card.style.display = failed ? '' : 'none';
+      });
+      document.getElementById('searchInput').value='';
+    }
+
+    function exportJ(){
+      if(!lastResult)return;
+      const a=document.createElement('a');
+      a.href=URL.createObjectURL(new Blob([JSON.stringify(lastResult,null,2)],{type:'application/json'}));
+      a.download=`${lastResult.projectName||'analysis'}-semantics.json`;
+      a.click();
+    }
+
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+    function $(id){return document.getElementById(id);}
+    function show(id){$(id).classList.add('show');}
+    function hide(id){$(id).classList.remove('show');}
+    function setBanner(bid,tid,msg){$(tid).textContent=msg;show(bid);}
+</script>
+</body>
+</html>

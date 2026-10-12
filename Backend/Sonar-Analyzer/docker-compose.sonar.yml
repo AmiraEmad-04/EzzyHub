@@ -38,15 +38,18 @@ services:
     depends_on:
       - sonarqube
     ports:
-      - "8080:8080"
+      - "8084:8084"
     environment:
       SONAR_HOST_URL: http://sonarqube:9000
-      SONAR_TOKEN: squ_fe96157669a1df8047483c2f647363cef029e87d
+      # User Token (not a Project/Global Analysis Token) — see the comment in
+      # application.properties for why analysis tokens break this service.
+      SONAR_TOKEN: squ_0bfe322dd9967a9e6ce437d0407faca73fa78af0
     volumes:
-      - /tmp/sonar-projects:/tmp/sonar-projects
+      - sonar_projects:/tmp/sonar-projects
 
 volumes:
   sonarqube_data:
   sonarqube_logs:
   sonarqube_extensions:
   postgresql_data:
+  sonar_projects:

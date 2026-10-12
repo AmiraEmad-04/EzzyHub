@@ -1,0 +1,1 @@
+The system shall stamp one PDF as a watermark or overlay on top of the pages of another PDF.

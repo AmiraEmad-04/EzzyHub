@@ -7,10 +7,43 @@ spring:
 
   cloud:
     gateway:
+      # Explicit HTTP client timeouts. Without this, Spring Cloud Gateway
+      # defaults to NO response timeout at all (unbounded) — which happens
+      # to be fine for code-analyzer's long-running /analyze call, but
+      # relying on an implicit "unset = unbounded" default is fragile: if
+      # a future Spring Cloud version or shared config ever introduces a
+      # default, this route would silently start failing on large projects.
+      # Set explicitly instead, with headroom above worst-case analysis time.
+      httpclient:
+        connect-timeout: 5000     # ms — TCP connect to downstream service
+        # Matches the frontend's AbortSignal.timeout(900000) for /api/code/analyze
+        # and /api/match — those are the long-running endpoints. Without this,
+        # the gateway would cut the connection at 180s even though the
+        # frontend is still willing to wait, causing a ClientAbortException
+        # on the backend for any analysis that takes longer than 3 minutes.
+        response-timeout: 900s    # time to wait for the full response body
+
       # ── Global default filters ────────────────────────────────────────────
       default-filters:
         # Add a request-ID header so logs across services can be correlated
         - AddRequestHeader=X-Gateway-Request-Id, ${random.uuid}
+        # BUG FIX: downstream services (code-analyzer, requirement-analyzer)
+        # each have their own CorsFilter for direct-access dev convenience.
+        # When a request comes through the gateway, BOTH the gateway's
+        # CorsWebFilter and the downstream service's CorsFilter add CORS
+        # headers to the response, so the browser receives e.g.
+        # Access-Control-Allow-Origin twice. Browsers reject responses with
+        # a duplicated Access-Control-Allow-Origin header outright (CORS
+        # spec violation), even though the underlying request succeeded —
+        # this caused 200 OK responses to be thrown away client-side as a
+        # CORS failure. DedupeResponseHeader is Spring Cloud Gateway's
+        # purpose-built filter for exactly this gateway+downstream CORS
+        # double-header scenario: it keeps a single value per header
+        # instead of risking stripping out the gateway's own legitimate one.
+        - name: DedupeResponseHeader
+          args:
+            name: Access-Control-Allow-Origin Access-Control-Allow-Credentials Access-Control-Allow-Methods Access-Control-Allow-Headers
+            strategy: RETAIN_FIRST
 
       # ── Route definitions ──────────────────────────────────────────────────
       # Each service is independently reachable through /api/<service>/**
@@ -20,11 +53,19 @@ spring:
         # ── Code Analyzer ────────────────────────────────────────────────────
         # Exposes: POST /api/code/analyze, GET /api/code/health, GET /api/code/info
         - id: code-analyzer
-          uri: http://localhost:8082
+          uri: http://localhost:8080
           predicates:
             - Path=/api/code/**
           filters:
-            - StripPrefix=2
+            # BUG FIX: this used to be `StripPrefix=2`, which forwarded
+            # /api/code/analyze as bare /analyze. The backend controller is
+            # mapped at /api/v1/analyze (@RequestMapping("/api/v1")), so
+            # every request 404'd on arrival — the gateway was forwarding to
+            # a path that never existed on the backend. RewritePath maps
+            # /api/code/** directly to /api/v1/** instead, matching the
+            # actual backend mapping (same pattern already used below for
+            # the requirement-analyzer-match route).
+            - RewritePath=/api/code/(?<segment>.*), /api/v1/${segment}
             # Increase max file size for large ZIP uploads (1 GB)
             - name: RequestSize
               args:
@@ -44,12 +85,32 @@ spring:
 
         # ── Matching endpoint (requirement-to-code) ──────────────────────────
         # Exposes: POST /api/match
-        - id: requirement-analyzer-match
-          uri: http://localhost:8081
+        - id: matching-service-match
+          uri: http://localhost:8083
           predicates:
             - Path=/api/match
           filters:
             - RewritePath=/api/match, /api/v1/match
+            - name: RequestSize
+              args:
+                maxSize: 1073741824   # 1 GB
+
+        # ── Sonar Analyzer ────────────────────────────────────────────────────
+        # Exposes: POST /api/sonar/analyze, GET /api/sonar/health
+        # NEW: sonar-analyzer had no route at all before — it was only listed
+        # under `services:` below for the health-check UI, so the frontend
+        # could never actually reach it through the gateway. It also used to
+        # be configured for port 8080, which collides with code-analyzer
+        # (also 8080) — moved to 8084 on the sonar-analyzer side; this route
+        # points at that new port. Controller is mapped at plain /api
+        # (@RequestMapping("/api")), so RewritePath maps /api/sonar/** to
+        # /api/** — same pattern as the code-analyzer route above.
+        - id: sonar-analyzer
+          uri: http://localhost:8084
+          predicates:
+            - Path=/api/sonar/**
+          filters:
+            - RewritePath=/api/sonar/(?<segment>.*), /api/${segment}
             - name: RequestSize
               args:
                 maxSize: 1073741824   # 1 GB
@@ -64,6 +125,20 @@ spring:
           filters:
             - StripPrefix=2           # /api/nlp/preprocess → /preprocess
 
+        # ── Report / History Service ─────────────────────────────────────────
+        # Exposes: POST   /api/history        → save analysis
+        #          GET    /api/history        → list records
+        #          GET    /api/history/{id}   → get full record
+        #          DELETE /api/history/{id}   → delete record
+        #          GET    /api/history/{id}/pdf → download PDF report
+        - id: report-service
+          uri: http://localhost:8086
+          predicates:
+            - Path=/api/history/**
+          filters:
+            - RewritePath=/api/history/(?<segment>.*), /api/v1/history/${segment}
+            - RewritePath=/api/history, /api/v1/history
+
         # ── Gateway aggregate health ─────────────────────────────────────────
         # Returns combined health of all downstream services.
         # Handled by GatewayHealthController (no forwarding needed).
@@ -74,32 +149,60 @@ spring:
           filters:
             - SetStatus=200
 
+        # ── Auth Service ──────────────────────────────────────────────────────
+        # Exposes: POST /api/auth/register, POST /api/auth/login, GET /api/auth/me,
+        #          GET  /api/auth/health
+        - id: auth-service
+          uri: http://localhost:8087
+          predicates:
+            - Path=/api/auth/**
+          filters:
+            - RewritePath=/api/auth/(?<segment>.*), /api/v1/auth/${segment}
+
+        # ── AI Suggestions ────────────────────────────────────────────────────
+        # NEW: AI-Suggestions had no route at all before — added late to the
+        # project and never wired into the gateway. Controller is mapped at
+        # /api/requirements/** (@RequestMapping("/api/requirements")), so
+        # RewritePath maps /api/ai-suggestions/** to /api/requirements/**,
+        # same pattern as the code-analyzer/sonar-analyzer routes above.
+        - id: ai-suggestions
+          uri: http://localhost:8088
+          predicates:
+            - Path=/api/ai-suggestions/**
+          filters:
+            - RewritePath=/api/ai-suggestions/(?<segment>.*), /api/requirements/${segment}
+            - name: RequestSize
+              args:
+                maxSize: 1073741824   # 1 GB
+
   # Codec settings — allow large multipart bodies (1 GB)
   codec:
     max-in-memory-size: 1GB
 
 # ── Actuator ──────────────────────────────────────────────────────────────────
+# "gateway" was previously exposed here, which publishes the full route table
+# (every downstream host/port and filter config) at /actuator/gateway/routes to
+# any unauthenticated caller — internal topology recon for free. Not used by the
+# app itself (the frontend uses the custom /api/health endpoint below instead).
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,gateway,metrics
+        include: health,info,metrics
   endpoint:
     health:
-      show-details: always
-    gateway:
-      enabled: true
+      show-details: never
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging:
   level:
-    com.ezzyhub.gateway: DEBUG
+    com.ezzyhub.gateway: INFO
     org.springframework.cloud.gateway: INFO
 
 # ── Downstream service URLs (override in env / Docker) ───────────────────────
 services:
   code-analyzer:
-    url: http://localhost:8082
+    url: http://localhost:8080
     health-path: /api/v1/health
   requirement-analyzer:
     url: http://localhost:8081
@@ -107,3 +210,21 @@ services:
   python-nlp:
     url: http://localhost:8000
     health-path: /health
+  # NEW: was pointing at :8083 (which is actually matching-service) with a
+  # health-path of /health — the controller is actually mapped at /api, so
+  # the real health endpoint is /api/health. Port corrected to 8084 to match
+  # the fix in sonar-analyzer's own application.properties.
+  sonar-analyzer:
+    url: http://localhost:8084
+    health-path: /api/health
+  report-service:
+    url: http://localhost:8086
+    health-path: /api/v1/history/health
+  # NEW: added alongside auth-service.
+  auth-service:
+    url: http://localhost:8087
+    health-path: /api/v1/auth/health
+  # NEW: added alongside the ai-suggestions route above.
+  ai-suggestions:
+    url: http://localhost:8088
+    health-path: /actuator/health

@@ -14,41 +14,14 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.util.*;
-import java.util.concurrent.*;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-/**
- * LLM integration service — calls whichever AI provider is configured via the
- * LLM_PROVIDER environment variable.
- *
- * Supported providers: anthropic (default), openai, gemini, grok, groq, cohere.
- *
- * FIXES applied:
- *
- * FIX-1 (thread-safe OkHttpClient):
- *   The original code used a lazy `if (httpClient == null)` check without
- *   synchronization. Under concurrent requests (e.g. @Async or parallel
- *   batch calls) multiple threads could create multiple OkHttpClient instances,
- *   leaking thread pools and connection pools.
- *   Now the client is created in a synchronized initializer block and stored
- *   in a final field that is set exactly once.
- *
- * FIX-2 (parallel batch analysis):
- *   The original code analyzed batches sequentially in a for-loop. For large
- *   projects this compounds LLM latency (e.g. 10 batches × 30 s = 5 min).
- *   Batches are now submitted to a bounded executor and processed in parallel,
- *   bounded at MAX_LLM_PARALLEL_CALLS (default 4) to avoid rate-limit errors.
- *
- * FIX-3 (extract JSON more robustly):
- *   LLMs sometimes wrap the JSON in triple-backtick fences even after explicit
- *   instructions not to. The extractJson() method now handles both ` ```json `
- *   and bare ` ``` ` fences, as well as leading/trailing whitespace.
- */
 @Service
 public class LLMService {
 
     private static final Logger log = LoggerFactory.getLogger(LLMService.class);
-    private static final MediaType JSON_MEDIA = MediaType.get("application/json; charset=utf-8");
+    private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
 
     private static final Set<String> SOURCE_EXTENSIONS = Set.of(
             "ts","tsx","js","mjs","jsx",
@@ -60,47 +33,43 @@ public class LLMService {
 
     @Autowired private AppConfig appConfig;
     @Autowired private ProjectStructureService structureService;
-
     private final ObjectMapper mapper = new ObjectMapper();
-
-    // FIX-1: client is created lazily but in a thread-safe, lock-free manner
-    // using a holder class (initialization-on-demand idiom).
-    private volatile OkHttpClient httpClient;
+    private OkHttpClient httpClient; // lazily initialized singleton
 
     private OkHttpClient getClient() {
         if (httpClient == null) {
-            synchronized (this) {
-                if (httpClient == null) {
-                    int t = appConfig.getInt("LLM_TIMEOUT_SECONDS", 180);
-                    httpClient = new OkHttpClient.Builder()
-                            .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-                            .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-                            .readTimeout(t,   java.util.concurrent.TimeUnit.SECONDS)
-                            .build();
-                }
-            }
+            int t = appConfig.getInt("LLM_TIMEOUT_SECONDS", 240);
+            httpClient = new OkHttpClient.Builder()
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .writeTimeout(60, TimeUnit.SECONDS)
+                    .readTimeout(t, TimeUnit.SECONDS)
+                    .build();
         }
         return httpClient;
     }
 
-    // ── Public API ────────────────────────────────────────────────────────────
+    // ================================================================
+    // PUBLIC API
+    // ================================================================
 
-    /** Call 1 — brief project-level summary. */
+    /**
+     * Call 1 — tiny project-level summary (type, purpose, stack).
+     */
     public SemanticAnalysis summarizeProject(ProjectStructure structure,
                                              Map<String, String> fileContents) throws Exception {
         String prompt = buildSummaryPrompt(structure, fileContents);
-        log.info("[summarize] prompt {} chars", prompt.length());
-        return parseSummary(callLLM(prompt));
+        log.info("[{}] Summary prompt: {} chars", provider(), prompt.length());
+        String raw = callLLM(prompt);
+        return parseSummary(raw);
     }
 
     /**
-     * Call 2..N — semantic analysis of source files, processed in parallel batches.
-     *
-     * FIX-2: Batches are executed in parallel up to MAX_LLM_PARALLEL_CALLS
-     * concurrent LLM calls. This cuts total analysis time from O(batches × latency)
-     * to O(ceil(batches/parallel) × latency).
+     * Call 2..N — batched semantic analysis of source files.
+     * Files are grouped into batches that fit the token budget,
+     * each batch is one LLM call, results are merged.
      */
     public List<FileSemanticAnalysis> analyzeFiles(Map<String, String> fileContents) throws Exception {
+        // Filter to source files only, sorted by importance
         List<Map.Entry<String, String>> sourceFiles = fileContents.entrySet().stream()
                 .filter(e -> e.getValue() != null && !e.getValue().isBlank())
                 .filter(e -> isSource(e.getKey()))
@@ -109,21 +78,26 @@ public class LLMService {
 
         if (sourceFiles.isEmpty()) return Collections.emptyList();
 
-        int maxFiles     = appConfig.getInt("MAX_FILES_FOR_LLM",   30);
-        int batchSize    = appConfig.getInt("BATCH_SIZE",            5);
+        int maxFiles     = appConfig.getInt("MAX_FILES_FOR_LLM", 30);
+        int batchSize    = appConfig.getInt("BATCH_SIZE", 1);
         int maxCharsFile = appConfig.getInt("MAX_CHARS_PER_FILE", 3000);
-        int maxParallel  = appConfig.getInt("MAX_LLM_PARALLEL_CALLS", 4);
 
+        // Cap total files analyzed
         List<Map.Entry<String, String>> toAnalyze = sourceFiles.stream()
                 .limit(maxFiles)
                 .collect(Collectors.toList());
 
-        log.info("Analyzing {} source files in batches of {} ({} parallel)", toAnalyze.size(), batchSize, maxParallel);
+        log.info("Analyzing {} source files in batches of {}", toAnalyze.size(), batchSize);
 
-        // Build all batches first
-        List<Map<String, String>> batches = new ArrayList<>();
+        List<FileSemanticAnalysis> allResults = new ArrayList<>();
+
+        // Process in batches
         for (int i = 0; i < toAnalyze.size(); i += batchSize) {
-            List<Map.Entry<String, String>> batch = toAnalyze.subList(i, Math.min(i + batchSize, toAnalyze.size()));
+            List<Map.Entry<String, String>> batch = toAnalyze.subList(
+                    i, Math.min(i + batchSize, toAnalyze.size())
+            );
+
+            // Build batch map with char limit per file
             Map<String, String> batchMap = new LinkedHashMap<>();
             for (Map.Entry<String, String> e : batch) {
                 String content = e.getValue().length() > maxCharsFile
@@ -131,44 +105,31 @@ public class LLMService {
                         : e.getValue();
                 batchMap.put(e.getKey(), content);
             }
-            batches.add(batchMap);
-        }
 
-        // FIX-2: Submit all batches to a bounded thread pool
-        ExecutorService executor = Executors.newFixedThreadPool(Math.min(maxParallel, batches.size()));
-        List<Future<List<FileSemanticAnalysis>>> futures = new ArrayList<>();
+            log.info("Batch {}/{}: {} files", (i/batchSize)+1,
+                    (int)Math.ceil(toAnalyze.size()/(double)batchSize), batch.size());
 
-        for (int i = 0; i < batches.size(); i++) {
-            final int batchIdx = i;
-            final Map<String, String> batchMap = batches.get(i);
-            futures.add(executor.submit(() -> {
-                log.info("Batch {}/{}: {} files", batchIdx + 1, batches.size(), batchMap.size());
-                try {
-                    String prompt = buildSemanticPrompt(batchMap);
-                    String raw    = callLLM(prompt);
-                    List<FileSemanticAnalysis> result = parseFileAnalyses(raw);
-                    log.info("Batch {}/{} parsed: {} analyses", batchIdx + 1, batches.size(), result.size());
-                    return result;
-                } catch (Exception e) {
-                    log.error("Batch {}/{} failed: {}", batchIdx + 1, batches.size(), e.getMessage());
-                    return stubBatch(batchMap, e.getMessage());
-                }
-            }));
-        }
-
-        executor.shutdown();
-        try {
-            executor.awaitTermination(30, TimeUnit.MINUTES);
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-        }
-
-        List<FileSemanticAnalysis> allResults = new ArrayList<>();
-        for (Future<List<FileSemanticAnalysis>> f : futures) {
             try {
-                allResults.addAll(f.get());
+                String prompt = buildSemanticPrompt(batchMap);
+                String raw    = callLLM(prompt);
+                List<FileSemanticAnalysis> batchResult = parseFileAnalyses(raw);
+                allResults.addAll(batchResult);
+                log.info("Batch parsed: {} file analyses", batchResult.size());
             } catch (Exception e) {
-                log.error("Batch future error: {}", e.getMessage());
+                log.error("Batch {}/{} failed: {}", (i/batchSize)+1,
+                        (int)Math.ceil(toAnalyze.size()/(double)batchSize), e.getMessage());
+                // Add stub entries for failed batch so caller knows which files failed
+                for (Map.Entry<String, String> fe : batch) {
+                    FileSemanticAnalysis stub = new FileSemanticAnalysis();
+                    stub.setFilePath(fe.getKey());
+                    stub.setFileName(fe.getKey().contains("/")
+                            ? fe.getKey().substring(fe.getKey().lastIndexOf('/') + 1)
+                            : fe.getKey());
+                    // Generic message only — the underlying exception (which may embed a raw
+                    // third-party API error body) is logged above, not returned to the client.
+                    stub.setSemanticRole("Analysis failed for this file.");
+                    allResults.add(stub);
+                }
             }
         }
 
@@ -182,7 +143,7 @@ public class LLMService {
             case "grok"    -> appConfig.get("GROK_MODEL",      "grok-3-mini");
             case "groq"    -> appConfig.get("GROQ_MODEL",      "llama-3.3-70b-versatile");
             case "cohere"  -> appConfig.get("COHERE_MODEL",    "command-r-plus-08-2024");
-            default        -> appConfig.get("ANTHROPIC_MODEL", "claude-sonnet-4-6");
+            default        -> appConfig.get("ANTHROPIC_MODEL", "claude-opus-4-5");
         };
         return provider() + "/" + model;
     }
@@ -199,7 +160,9 @@ public class LLMService {
         return key != null && !key.isBlank() && !key.startsWith("your_");
     }
 
-    // ── Routing ───────────────────────────────────────────────────────────────
+    // ================================================================
+    // ROUTING
+    // ================================================================
 
     private String callLLM(String prompt) throws IOException {
         return switch (provider()) {
@@ -213,17 +176,37 @@ public class LLMService {
     }
 
     private String provider() {
-        return appConfig.get("LLM_PROVIDER", "anthropic").toLowerCase().trim();
+        // Explicit override always wins.
+        String explicit = appConfig.get("LLM_PROVIDER", "").toLowerCase().trim();
+        if (!explicit.isBlank()) return explicit;
+        // FIX: no explicit provider set -> auto-detect from whichever API key is
+        // actually present, so the service works with the key you start it with
+        // instead of silently defaulting to Anthropic (empty key) and failing.
+        if (keyPresent("COHERE_API_KEY"))    return "cohere";
+        if (keyPresent("ANTHROPIC_API_KEY")) return "anthropic";
+        if (keyPresent("OPENAI_API_KEY"))    return "openai";
+        if (keyPresent("GROQ_API_KEY"))      return "groq";
+        if (keyPresent("GROK_API_KEY"))      return "grok";
+        if (keyPresent("GEMINI_API_KEY"))    return "gemini";
+        return "anthropic";
     }
 
-    // ── Prompts ───────────────────────────────────────────────────────────────
+    private boolean keyPresent(String name) {
+        String v = appConfig.get(name, "");
+        return v != null && !v.isBlank() && !v.startsWith("your_");
+    }
+
+    // ================================================================
+    // PROMPT 1 — Project summary (very short, ~500 tokens)
+    // ================================================================
 
     private String buildSummaryPrompt(ProjectStructure structure,
                                       Map<String, String> fileContents) {
         ProjectStructure.ProjectStats stats = structure.getStats();
-        StringBuilder sb = new StringBuilder("Summarize this software project in JSON.\n\n");
-        sb.append("Files: ").append(stats.getTotalFiles())
-          .append(", Dirs: ").append(stats.getTotalDirectories()).append("\n");
+        StringBuilder sb = new StringBuilder();
+        sb.append("Summarize this software project in JSON.\n\n");
+        sb.append("Files: ").append(stats.getTotalFiles()).append(", ");
+        sb.append("Dirs: ").append(stats.getTotalDirectories()).append("\n");
 
         if (stats.getLanguageDistribution() != null)
             stats.getLanguageDistribution().entrySet().stream().limit(5)
@@ -231,14 +214,15 @@ public class LLMService {
         sb.append("\n");
 
         if (structure.getBuildFiles() != null)
-            sb.append("Build: ").append(
-                    structure.getBuildFiles().stream().limit(5).collect(Collectors.joining(", "))
-            ).append("\n");
+            sb.append("Build: ").append(String.join(", ", structure.getBuildFiles().stream().limit(5).collect(Collectors.toList()))).append("\n");
 
         sb.append("Tree:\n").append(structureService.generateTreeText(structure.getTree(), 60));
 
+        // One representative file for context (never a secrets/credentials file —
+        // its content would otherwise be forwarded verbatim to a third-party LLM)
         fileContents.entrySet().stream()
                 .filter(e -> e.getValue() != null && e.getValue().length() > 100)
+                .filter(e -> !isLikelySensitiveFile(e.getKey()))
                 .findFirst()
                 .ifPresent(e -> sb.append("\nSample file (").append(e.getKey()).append("):\n")
                         .append(e.getValue(), 0, Math.min(e.getValue().length(), 1500)).append("\n"));
@@ -251,57 +235,64 @@ public class LLMService {
         return sb.toString();
     }
 
+    // ================================================================
+    // PROMPT 2 — Deep semantic analysis of a batch of files
+    // ================================================================
+
     private String buildSemanticPrompt(Map<String, String> files) {
         StringBuilder sb = new StringBuilder();
-        sb.append("Analyze the semantic meaning of each source file below.\n");
-        sb.append("IMPORTANT PARSING RULES:\n");
-        sb.append("- Extract class/interface/enum names using word boundaries (e.g. 'class DataQueryController' not 'over' from 'implements').\n");
-        sb.append("- If no Javadoc, create a synthetic semanticMeaning from class name + key methods/fields.\n");
-        sb.append("For every file, class, method and field: explain WHAT IT DOES and WHY it exists.\n");
-        sb.append("Focus on SEMANTIC MEANING — not syntax, not formatting.\n");
-        sb.append("Every 'semanticMeaning' field must contain a real, specific, helpful description.\n\n");
+        sb.append("Analyze each source file below for requirement-to-code traceability.\n");
+        sb.append("For each file, write a DETAILED semanticRole: 2-4 sentences naming the concrete\n");
+        sb.append("capabilities/operations the file implements (e.g. \"creates an appointment\",\n");
+        sb.append("\"hashes passwords\", \"validates email format\", \"deletes a patient\"), and list each\n");
+        sb.append("public operation as a short capability phrase. Name what the code ACTUALLY does;\n");
+        sb.append("do NOT invent capabilities that are not present. Be specific, not generic.\n");
+        sb.append("ALSO list \"limitations\": concrete things the file does NOT do, or does weakly, that a\n");
+        sb.append("requirement might expect. Report absences explicitly, e.g. stores password in plain text (no hashing),\n");
+        sb.append("no input validation, read-only with no create/update/delete endpoint, no logout,\n");
+        sb.append("no duplicate or uniqueness check, no email format validation. Only state limitations you can\n");
+        sb.append("verify from the code; if none are evident use an empty list.\n\n");
 
         for (Map.Entry<String, String> e : files.entrySet()) {
             sb.append("=== ").append(e.getKey()).append(" ===\n");
             sb.append(e.getValue()).append("\n\n");
         }
 
-        sb.append("Return ONLY valid JSON (no markdown fences, start with {):\n");
+        sb.append("Return ONLY valid JSON (no markdown fences, start with {).\n");
         sb.append("{\n  \"fileAnalyses\": [\n    {\n");
-        sb.append("      \"filePath\": \"exact/path/to/file.ts\",\n");
-        sb.append("      \"fileName\": \"file.ts\",\n");
-        sb.append("      \"language\": \"TypeScript\",\n");
-        sb.append("      \"semanticRole\": \"what this file's responsibility is in the system\",\n");
+        sb.append("      \"filePath\": \"exact/path/to/File.java\",\n");
+        sb.append("      \"fileName\": \"File.java\",\n");
+        sb.append("      \"language\": \"Java\",\n");
+        sb.append("      \"semanticRole\": \"2-4 sentences: the concrete capabilities this file implements, named specifically\",\n");
         sb.append("      \"dependencies\": [\"imported module names\"],\n");
+        sb.append("      \"capabilities\": [\"short phrase per public operation, e.g. list patient prescriptions\"],\n");
+        sb.append("      \"limitations\": [\"explicit absence/weakness, e.g. stores password in plain text (no hashing)\"],\n");
         sb.append("      \"classes\": [\n        {\n");
         sb.append("          \"name\": \"ClassName\",\n");
-        sb.append("          \"kind\": \"class|interface|enum|abstract class\",\n");
+        sb.append("          \"kind\": \"class|interface|enum\",\n");
         sb.append("          \"extendsFrom\": \"ParentClass or null\",\n");
         sb.append("          \"implements_\": [\"InterfaceName\"],\n");
         sb.append("          \"semanticMeaning\": \"what this class represents and its role\",\n");
-        sb.append("          \"fields\": [{\"name\":\"\",\"type\":\"\",\"visibility\":\"\",\"semanticMeaning\":\"what it stores and why\"}],\n");
-        sb.append("          \"methods\": [{\n");
-        sb.append("            \"name\": \"\", \"signature\": \"\", \"visibility\": \"\",\n");
-        sb.append("            \"isAsync\": false, \"isStatic\": false, \"returnType\": \"\",\n");
-        sb.append("            \"semanticMeaning\": \"detailed description of what this method actually does\"\n");
-        sb.append("          }]\n        }\n      ],\n");
-        sb.append("      \"moduleFunctions\": [{\"name\":\"\",\"signature\":\"\",\"visibility\":\"\",");
-        sb.append("\"isAsync\":false,\"isStatic\":false,\"semanticMeaning\":\"\"}]\n");
+        sb.append("          \"methods\": [{\"name\":\"\",\"signature\":\"\",\"visibility\":\"\",\"returnType\":\"\",\"semanticMeaning\":\"specific description of what this method does\"}]\n");
+        sb.append("        }\n      ],\n");
+        sb.append("      \"moduleFunctions\": [{\"name\":\"\",\"signature\":\"\",\"visibility\":\"\",\"semanticMeaning\":\"what this function does\"}]\n");
         sb.append("    }\n  ]\n}\n");
         return sb.toString();
     }
 
-    // ── Parsers ───────────────────────────────────────────────────────────────
+    // ================================================================
+    // PARSERS
+    // ================================================================
 
     private SemanticAnalysis parseSummary(String raw) {
         SemanticAnalysis s = new SemanticAnalysis();
         s.setRawResponse(raw);
         try {
             JsonNode j = mapper.readTree(extractJson(raw));
-            s.setProjectType(   j.path("projectType").asText(null));
-            s.setMainPurpose(   j.path("mainPurpose").asText(null));
+            s.setProjectType(  j.path("projectType").asText(null));
+            s.setMainPurpose(  j.path("mainPurpose").asText(null));
             s.setTechnicalStack(j.path("technicalStack").asText(null));
-            s.setSummary(       j.path("summary").asText(null));
+            s.setSummary(      j.path("summary").asText(null));
         } catch (Exception e) {
             log.warn("Summary parse failed: {}", e.getMessage());
             s.setSummary(raw.length() > 500 ? raw.substring(0, 500) : raw);
@@ -311,39 +302,81 @@ public class LLMService {
 
     private List<FileSemanticAnalysis> parseFileAnalyses(String raw) {
         List<FileSemanticAnalysis> results = new ArrayList<>();
+        String json = extractJson(raw);
+        // Fast path: the response is complete, valid JSON.
         try {
-            JsonNode root = mapper.readTree(extractJson(raw));
-            JsonNode arr  = root.path("fileAnalyses");
-            if (!arr.isArray()) return results;
-
-            for (JsonNode fn : arr) {
-                FileSemanticAnalysis fsa = new FileSemanticAnalysis();
-                fsa.setFilePath(    fn.path("filePath").asText(null));
-                fsa.setFileName(    fn.path("fileName").asText(null));
-                fsa.setLanguage(    fn.path("language").asText(null));
-                fsa.setSemanticRole(fn.path("semanticRole").asText(null));
-                fsa.setDependencies(strList(fn.path("dependencies")));
-
-                List<FileSemanticAnalysis.ClassSemantic> classes = new ArrayList<>();
-                for (JsonNode cn : fn.path("classes")) {
-                    FileSemanticAnalysis.ClassSemantic cs = new FileSemanticAnalysis.ClassSemantic();
-                    cs.setName(           cn.path("name").asText(null));
-                    cs.setKind(           cn.path("kind").asText("class"));
-                    cs.setExtendsFrom(    cn.path("extendsFrom").asText(null));
-                    cs.setImplements_(    strList(cn.path("implements_")));
-                    cs.setSemanticMeaning(cn.path("semanticMeaning").asText(null));
-                    cs.setFields(         parseFields(cn.path("fields")));
-                    cs.setMethods(        parseMethods(cn.path("methods")));
-                    classes.add(cs);
-                }
-                fsa.setClasses(classes);
-                fsa.setModuleFunctions(parseMethods(fn.path("moduleFunctions")));
-                results.add(fsa);
+            JsonNode arr = mapper.readTree(json).path("fileAnalyses");
+            if (arr.isArray()) {
+                for (JsonNode fn : arr) results.add(toFsa(fn));
+                return results;
             }
         } catch (Exception e) {
-            log.error("File analysis parse failed: {}", e.getMessage());
+            // FIX: the LLM output was truncated (output-token cap) mid-array.
+            // Instead of discarding the whole batch, salvage every file object
+            // that DID complete and drop only the truncated tail.
+            log.warn("Full JSON parse failed ({}); salvaging complete entries", e.getMessage());
         }
+        for (String objStr : extractArrayObjects(json, "fileAnalyses")) {
+            try { results.add(toFsa(mapper.readTree(objStr))); }
+            catch (Exception ignore) { /* truncated trailing object - skip */ }
+        }
+        if (!results.isEmpty())
+            log.info("Salvaged {} complete file analyses from a truncated response", results.size());
         return results;
+    }
+
+    /** Map one fileAnalyses[] element to a FileSemanticAnalysis. */
+    private FileSemanticAnalysis toFsa(JsonNode fn) {
+        FileSemanticAnalysis fsa = new FileSemanticAnalysis();
+        fsa.setFilePath(    fn.path("filePath").asText(null));
+        fsa.setFileName(    fn.path("fileName").asText(null));
+        fsa.setLanguage(    fn.path("language").asText(null));
+        fsa.setSemanticRole(fn.path("semanticRole").asText(null));
+        fsa.setDependencies(strList(fn.path("dependencies")));
+        List<FileSemanticAnalysis.ClassSemantic> classes = new ArrayList<>();
+        for (JsonNode cn : fn.path("classes")) {
+            FileSemanticAnalysis.ClassSemantic cs = new FileSemanticAnalysis.ClassSemantic();
+            cs.setName(           cn.path("name").asText(null));
+            cs.setKind(           cn.path("kind").asText("class"));
+            cs.setExtendsFrom(    cn.path("extendsFrom").asText(null));
+            cs.setImplements_(    strList(cn.path("implements_")));
+            cs.setSemanticMeaning(cn.path("semanticMeaning").asText(null));
+            cs.setFields(         parseFields(cn.path("fields")));
+            cs.setMethods(        parseMethods(cn.path("methods")));
+            classes.add(cs);
+        }
+        fsa.setClasses(classes);
+        fsa.setModuleFunctions(parseMethods(fn.path("moduleFunctions")));
+        fsa.setCapabilities(strList(fn.path("capabilities")));
+        fsa.setLimitations(strList(fn.path("limitations")));
+        return fsa;
+    }
+
+    /** Extract each complete top-level {...} object inside the given JSON array key,
+     *  tolerating a truncated/unterminated trailing object. */
+    private List<String> extractArrayObjects(String json, String arrayKey) {
+        List<String> out = new ArrayList<>();
+        if (json == null) return out;
+        int k = json.indexOf("\"" + arrayKey + "\"");
+        if (k < 0) return out;
+        int startIdx = json.indexOf('[', k);
+        if (startIdx < 0) return out;
+        int depth = 0, objStart = -1;
+        boolean inStr = false, esc = false;
+        for (int i = startIdx + 1; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (inStr) {
+                if (esc) esc = false;
+                else if (c == '\\') esc = true;
+                else if (c == '"') inStr = false;
+                continue;
+            }
+            if (c == '"') { inStr = true; }
+            else if (c == '{') { if (depth == 0) objStart = i; depth++; }
+            else if (c == '}') { if (depth > 0 && --depth == 0 && objStart >= 0) { out.add(json.substring(objStart, i + 1)); objStart = -1; } }
+            else if (c == ']' && depth == 0) { break; }
+        }
+        return out;
     }
 
     private List<FileSemanticAnalysis.MethodSemantic> parseMethods(JsonNode arr) {
@@ -377,12 +410,14 @@ public class LLMService {
         return list;
     }
 
-    // ── Provider implementations ──────────────────────────────────────────────
+    // ================================================================
+    // PROVIDER IMPLEMENTATIONS
+    // ================================================================
 
     private String callAnthropic(String prompt) throws IOException {
         String apiKey  = appConfig.get("ANTHROPIC_API_KEY");
         validateKey(apiKey, "ANTHROPIC_API_KEY");
-        String model   = appConfig.get("ANTHROPIC_MODEL", "claude-sonnet-4-6");
+        String model   = appConfig.get("ANTHROPIC_MODEL", "claude-opus-4-5");
         String baseUrl = appConfig.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com");
         baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length()-1) : baseUrl;
 
@@ -394,7 +429,7 @@ public class LLMService {
 
         Request req = new Request.Builder()
                 .url(baseUrl + "/v1/messages")
-                .post(RequestBody.create(mapper.writeValueAsString(body), JSON_MEDIA))
+                .post(RequestBody.create(mapper.writeValueAsString(body), JSON))
                 .addHeader("x-api-key", apiKey)
                 .addHeader("anthropic-version", "2023-06-01")
                 .addHeader("Content-Type", "application/json")
@@ -422,7 +457,7 @@ public class LLMService {
 
         Request req = new Request.Builder()
                 .url("https://api.openai.com/v1/chat/completions")
-                .post(RequestBody.create(mapper.writeValueAsString(body), JSON_MEDIA))
+                .post(RequestBody.create(mapper.writeValueAsString(body), JSON))
                 .addHeader("Authorization", "Bearer " + apiKey)
                 .addHeader("Content-Type",  "application/json")
                 .build();
@@ -437,9 +472,10 @@ public class LLMService {
     private String callGrok(String prompt) throws IOException {
         String apiKey = appConfig.get("GROK_API_KEY");
         validateKey(apiKey, "GROK_API_KEY");
+        String model  = appConfig.get("GROK_MODEL", "grok-3-mini");
 
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("model", appConfig.get("GROK_MODEL", "grok-3-mini"));
+        body.put("model", model);
         body.put("max_tokens", 8192);
         body.put("messages", List.of(
                 Map.of("role","system","content", systemInstruction()),
@@ -448,7 +484,7 @@ public class LLMService {
 
         Request req = new Request.Builder()
                 .url("https://api.x.ai/v1/chat/completions")
-                .post(RequestBody.create(mapper.writeValueAsString(body), JSON_MEDIA))
+                .post(RequestBody.create(mapper.writeValueAsString(body), JSON))
                 .addHeader("Authorization", "Bearer " + apiKey)
                 .addHeader("Content-Type",  "application/json")
                 .build();
@@ -463,10 +499,11 @@ public class LLMService {
     private String callGroq(String prompt) throws IOException {
         String apiKey = appConfig.get("GROQ_API_KEY");
         validateKey(apiKey, "GROQ_API_KEY");
+        String model  = appConfig.get("GROQ_MODEL", "llama-3.3-70b-versatile");
 
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("model",       appConfig.get("GROQ_MODEL", "llama-3.3-70b-versatile"));
-        body.put("max_tokens",  8192);
+        body.put("model", model);
+        body.put("max_tokens", 8192);
         body.put("temperature", 0.2);
         body.put("messages", List.of(
                 Map.of("role","system","content", systemInstruction()),
@@ -475,7 +512,7 @@ public class LLMService {
 
         Request req = new Request.Builder()
                 .url("https://api.groq.com/openai/v1/chat/completions")
-                .post(RequestBody.create(mapper.writeValueAsString(body), JSON_MEDIA))
+                .post(RequestBody.create(mapper.writeValueAsString(body), JSON))
                 .addHeader("Authorization", "Bearer " + apiKey)
                 .addHeader("Content-Type",  "application/json")
                 .build();
@@ -490,10 +527,11 @@ public class LLMService {
     private String callCohere(String prompt) throws IOException {
         String apiKey = appConfig.get("COHERE_API_KEY");
         validateKey(apiKey, "COHERE_API_KEY");
+        String model  = appConfig.get("COHERE_MODEL", "command-r-plus-08-2024");
 
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("model",       appConfig.get("COHERE_MODEL", "command-r-plus-08-2024"));
-        body.put("max_tokens",  4096);
+        body.put("model", model);
+        body.put("max_tokens", 4096);
         body.put("temperature", 0.2);
         body.put("messages", List.of(
                 Map.of("role","system","content", systemInstruction()),
@@ -502,7 +540,7 @@ public class LLMService {
 
         Request req = new Request.Builder()
                 .url("https://api.cohere.com/v2/chat")
-                .post(RequestBody.create(mapper.writeValueAsString(body), JSON_MEDIA))
+                .post(RequestBody.create(mapper.writeValueAsString(body), JSON))
                 .addHeader("Authorization", "Bearer " + apiKey)
                 .addHeader("Content-Type",  "application/json")
                 .addHeader("Accept",        "application/json")
@@ -530,7 +568,7 @@ public class LLMService {
 
         Request req = new Request.Builder()
                 .url(url)
-                .post(RequestBody.create(mapper.writeValueAsString(body), JSON_MEDIA))
+                .post(RequestBody.create(mapper.writeValueAsString(body), JSON))
                 .addHeader("Content-Type", "application/json")
                 .build();
 
@@ -542,7 +580,9 @@ public class LLMService {
         }
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // ================================================================
+    // HELPERS
+    // ================================================================
 
     private String systemInstruction() {
         return "You are a code semantic analysis engine. "
@@ -550,23 +590,13 @@ public class LLMService {
                 + "Always respond with valid JSON only — no markdown fences, no explanation, start directly with {.";
     }
 
-    /**
-     * FIX-3: Extracts JSON object from LLM response, handling:
-     *   - ` ```json ... ``` ` fences
-     *   - ` ``` ... ``` ` fences
-     *   - Leading/trailing whitespace and prose
-     */
     private String extractJson(String text) {
-        if (text == null) return "{}";
         text = text.trim();
-        // Strip code fences
         if (text.startsWith("```json")) text = text.substring(7);
-        else if (text.startsWith("```")) text = text.substring(3);
+        else if (text.startsWith("```"))  text = text.substring(3);
         if (text.endsWith("```")) text = text.substring(0, text.length() - 3);
         text = text.trim();
-        // Find the JSON object boundaries
-        int s = text.indexOf('{');
-        int e = text.lastIndexOf('}');
+        int s = text.indexOf('{'), e = text.lastIndexOf('}');
         return (s >= 0 && e > s) ? text.substring(s, e + 1) : text;
     }
 
@@ -579,16 +609,29 @@ public class LLMService {
 
     private boolean isSource(String path) {
         int i = path.lastIndexOf('.');
-        return i >= 0 && SOURCE_EXTENSIONS.contains(path.substring(i + 1).toLowerCase());
+        return i >= 0 && SOURCE_EXTENSIONS.contains(path.substring(i+1).toLowerCase());
+    }
+
+    private static final java.util.regex.Pattern SENSITIVE_FILE_PATTERN = java.util.regex.Pattern.compile(
+            "(^|/)(\\.env(\\..*)?|id_rsa|id_dsa|id_ecdsa|id_ed25519|\\.npmrc|\\.netrc|\\.pgpass|" +
+            "\\.git-credentials|credentials\\.json|secrets?\\.(json|ya?ml)|service[_-]?account.*\\.json)$|" +
+            "\\.(pem|key|pfx|p12|jks|keystore|asc)$",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /** True for filenames that conventionally hold secrets/credentials — never sent to a third-party LLM as a "sample". */
+    private boolean isLikelySensitiveFile(String path) {
+        return SENSITIVE_FILE_PATTERN.matcher(path).find();
     }
 
     private int importanceScore(String path) {
         String n = path.toLowerCase();
-        String f = n.contains("/") ? n.substring(n.lastIndexOf('/') + 1) : n;
+        String f = n.contains("/") ? n.substring(n.lastIndexOf('/')+1) : n;
         if (f.contains("application") || f.contains("main")) return 0;
-        if (f.contains("service")    && !f.contains("spec")) return 1;
-        if (f.contains("controller") && !f.contains("spec")) return 2;
-        if (!f.contains("spec") && !f.contains("test"))       return 3;
+        if (f.startsWith("generator") && !f.contains("spec")) return 1;
+        if (f.contains("service")    && !f.contains("spec")) return 2;
+        if (f.contains("controller") && !f.contains("spec")) return 3;
+        if (f.contains("command")    && !f.contains("spec")) return 4;
+        if (!f.contains("spec") && !f.contains("test"))       return 5;
         return 10;
     }
 
@@ -599,16 +642,5 @@ public class LLMService {
 
     private String bodyStr(Response r) throws IOException {
         return r.body() != null ? r.body().string() : "";
-    }
-
-    /** Create stub entries for a failed batch so the report still lists the files. */
-    private List<FileSemanticAnalysis> stubBatch(Map<String, String> batchMap, String errorMsg) {
-        return batchMap.keySet().stream().map(path -> {
-            FileSemanticAnalysis stub = new FileSemanticAnalysis();
-            stub.setFilePath(path);
-            stub.setFileName(path.contains("/") ? path.substring(path.lastIndexOf('/') + 1) : path);
-            stub.setSemanticRole("Analysis failed: " + errorMsg);
-            return stub;
-        }).collect(Collectors.toList());
     }
 }

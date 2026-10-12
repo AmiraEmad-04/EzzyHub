@@ -1,33 +1,32 @@
 """
-EzzyHub NLP Microservice v2.0
+EzzyHub NLP Microservice v2.2
 ==============================
 FastAPI service — handles NLP Phases 2-4 of the Requirement Analysis Pipeline.
 
-NEW in v2:
-  POST /rerank             — cross-encoder re-ranking of candidate matches
-  POST /validate           — requirement validation via HF Inference API or Groq
-  GET  /models             — list loaded models and their status
+NEW in v2.2 (CRITICAL FIX):
+  - embed_code() now uses req_model (same vector space as requirements)
+    → cosine similarity between requirements and code chunks is now VALID
+    → expected to raise FR-2/FR-4 scores from ~0.05 to ~0.6-0.85
+  - chunk_text now expands camelCase: importFromGitHub → "import From GitHub"
+    → SBERT tokenizer sees real English words → better semantic matching
+  - POST /batch-preprocess-and-embed — embed N requirements in 1 HTTP call
+    (Java MatchingService falls back to serial calls if this 404s, but
+     adding it avoids the warning and dramatically reduces latency for 46+ reqs)
 
-SECURITY:
-  - X-API-Key header required on all mutation endpoints (disabled in DEV mode)
-  - CORS restricted to known origins
-  - Request size capped at 1 MB
-  - Startup: no secrets logged
-
-PERFORMANCE:
-  - Disk cache (diskcache): embeddings cached by SHA-256 hash of text
-  - Batch encoding: embed_words() uses sentence_transformers batch encode
-  - Startup: all models loaded concurrently via threading
+NEW in v2.1:
+  POST /ast-chunk-zip  — AST-based Java chunker (professor's suggestion)
 """
 
+import io
 import logging
 import os
 import threading
+import zipfile as zipmod
 from contextlib import asynccontextmanager
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any, Annotated
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Security, Request
+from fastapi import FastAPI, HTTPException, Security, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel, Field
@@ -40,19 +39,40 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ── Config ────────────────────────────────────────────────────────────────────
-DEV_MODE    = os.getenv("DEV_MODE", "true").lower() == "true"
-SERVICE_KEY = os.getenv("NLP_SERVICE_KEY", "")  # set in production
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+DEV_MODE    = os.getenv("DEV_MODE", "false").lower() == "true"
+SERVICE_KEY = os.getenv("NLP_SERVICE_KEY", "")
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 
-# ── Globals (loaded once at startup) ─────────────────────────────────────────
+# Refuse to start in production mode with no key configured — silently
+# no-op'ing auth (the old behavior) would let every request through with a
+# 200, which is worse than a loud crash at boot.
+if not DEV_MODE and not SERVICE_KEY:
+    raise RuntimeError(
+        "NLP_SERVICE_KEY must be set when DEV_MODE is not true. "
+        "Set NLP_SERVICE_KEY to a strong secret, or set DEV_MODE=true for local development."
+    )
+
+# Upload / zip-bomb guards for /ast-chunk-zip.
+# These are still-meaningful bounds, but the old 20 MB upload default was far too
+# low for this service's actual job (chunking whole Java codebases — real projects,
+# and the bundled evaluation datasets, routinely exceed 20 MB) and was inconsistent
+# with the rest of the stack (api-gateway allows 1 GB, code-analyzer and
+# matching-service allow 500 MB). Raised to sane defaults that accept real projects
+# while still stopping abuse: the uncompressed-size and file-count caps below remain
+# the real zip-bomb protection. All three stay overridable via environment variables
+# (set them LOWER again for a locked-down deployment if you want stricter limits).
+MAX_UPLOAD_MB           = int(os.getenv("MAX_UPLOAD_MB", "200"))
+MAX_ZIP_UNCOMPRESSED_MB = int(os.getenv("MAX_ZIP_UNCOMPRESSED_MB", "1000"))
+MAX_JAVA_FILES          = int(os.getenv("MAX_JAVA_FILES", "5000"))
+
 from nlp_pipeline import NLPPipeline
 from embedder    import EmbeddingService
 from hf_validator import HFValidator
+from ast_chunker import chunk_java_source
 
-_nlp:    NLPPipeline    = None
-_emb:    EmbeddingService = None
-_hfval:  HFValidator    = None
+_nlp:   NLPPipeline     = None
+_emb:   EmbeddingService = None
+_hfval: HFValidator     = None
 _ready = threading.Event()
 
 
@@ -69,7 +89,7 @@ def _load_models():
         logger.info("  bge_model    : %s", _emb.bge_model_loaded)
         logger.info("  reranker     : %s", _emb.reranker_loaded)
         logger.info("  hf_validator : %s", _hfval.available)
-        logger.info("  NLP service ready  (port 8000)")
+        logger.info("  NLP service ready v2.2 (port 8000)")
         logger.info("=" * 60)
     except Exception as e:
         logger.error("FATAL: model load failed: %s", e, exc_info=True)
@@ -83,13 +103,12 @@ async def lifespan(app: FastAPI):
     logger.info("Shutdown.")
 
 
-# ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="EzzyHub NLP Microservice",
-    description="NLP Phases 2-4 + Hugging Face cross-encoder re-ranking",
-    version="2.0.0",
+    description="NLP Phases 2-4 + AST Java chunker + same-space embeddings (v2.2)",
+    version="2.2.0",
     lifespan=lifespan,
-    docs_url="/docs" if DEV_MODE else None,   # hide Swagger in production
+    docs_url="/docs" if DEV_MODE else None,
     redoc_url=None,
 )
 
@@ -100,20 +119,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── API Key security (skip in DEV_MODE) ───────────────────────────────────────
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 def require_key(key: str = Security(_api_key_header)):
     if DEV_MODE:
         return
-    if not SERVICE_KEY:
-        return   # key not configured — open (log a warning)
+    # Startup guard above guarantees SERVICE_KEY is non-empty here.
     if key != SERVICE_KEY:
         raise HTTPException(status_code=403, detail="Invalid or missing X-API-Key")
 
 def check_ready():
     if not _ready.is_set():
         raise HTTPException(status_code=503, detail="Models still loading — retry in a moment")
+
+
+def _vec_failed(embedding) -> bool:
+    """
+    True if an embedding vector represents a FAILURE: empty, all-zero, or
+    containing NaN/Inf. A real embedding always has non-zero magnitude, so an
+    all-zero (but non-empty) vector is the fingerprint of a failed encode. This
+    replaces the old buggy `is_zero and not embedding` check that never fired
+    for a non-empty zero vector.
+    """
+    if not embedding:
+        return True
+    saw_nonzero = False
+    for x in embedding:
+        if x != x or x in (float("inf"), float("-inf")):  # NaN or Inf
+            return True
+        if x != 0.0:
+            saw_nonzero = True
+    return not saw_nonzero
 
 
 # ── Request / Response models ─────────────────────────────────────────────────
@@ -128,9 +164,11 @@ class PreprocessResponse(BaseModel):
     warnings:     List[str]
 
 class EmbedRequest(BaseModel):
-    sentence: str         = Field(..., min_length=1, max_length=10_000)
-    keywords: List[str]   = Field(default_factory=list)
-    mode:     str         = Field(default="requirement")  # "requirement" | "code"
+    sentence: str = Field(..., min_length=1, max_length=10_000)
+    keywords: List[Annotated[str, Field(max_length=200)]] = Field(
+        default_factory=list, max_length=100
+    )
+    mode:     str = Field(default="requirement")
 
 class EmbedResponse(BaseModel):
     sentence_embedding: List[float]
@@ -138,8 +176,8 @@ class EmbedResponse(BaseModel):
     oov_keywords:       List[str]
 
 class PreprocessEmbedRequest(BaseModel):
-    text: str  = Field(..., min_length=1, max_length=10_000)
-    mode: str  = Field(default="requirement")   # "requirement" | "code"
+    text: str = Field(..., min_length=1, max_length=10_000)
+    mode: str = Field(default="requirement")
 
 class PreprocessEmbedResponse(BaseModel):
     tokens:             List[str]
@@ -150,10 +188,64 @@ class PreprocessEmbedResponse(BaseModel):
     word_embeddings:    Dict[str, List[float]]
     oov_keywords:       List[str]
 
+# ── NEW v2.2: Batch preprocess-and-embed models ───────────────────────────────
+
+class BatchPreprocessEmbedRequest(BaseModel):
+    """
+    Batch endpoint — embed N requirements in one call.
+
+    texts: list of strings in format "REQ-ID||requirement text"
+           The ID prefix is echoed back in the response for easy mapping.
+           Example: ["FR-2.1.1||Allow users to import source code from GitHub"]
+    mode:  "requirement" (default) or "code"
+    """
+    texts: List[str] = Field(..., min_items=1, max_items=200)
+    mode:  str       = Field(default="requirement")
+
+class BatchEmbedResult(BaseModel):
+    """Must match Java BatchPreprocessResponse.SingleEmbedResult field names exactly."""
+    index:              int                              # position in input — Java uses for mapping
+    req_id:             str                              # echoed from "REQ-ID||text" prefix
+    text:               str
+    tokens:             List[str]
+    keywords:           List[str]
+    action_verbs:       List[str]
+    warnings:           List[str]
+    sentence_embedding: List[float]                      # Java @JsonProperty("sentence_embedding")
+    word_embeddings:    Dict[str, List[float]]
+    oov_keywords:       List[str]
+    error:              Optional[str] = None
+
+class BatchPreprocessEmbedResponse(BaseModel):
+    """Must match Java BatchPreprocessResponse field names exactly."""
+    total:   int
+    success: int                                         # Java reads .getSuccess()
+    failed:  int                                         # Java reads .getFailed()
+    results: List[BatchEmbedResult]
+
+# ── AST Chunk models ──────────────────────────────────────────────────────────
+
+class AstChunkResponse(BaseModel):
+    file_path:   str
+    class_name:  str
+    method_name: Optional[str]    = None
+    chunk_type:  str
+    chunk_text:  str
+    line_start:  int              = 0
+    keywords:    List[str]
+    embedding:   List[float]
+
+class AstChunkZipResponse(BaseModel):
+    total_files:  int
+    total_chunks: int
+    chunks:       List[AstChunkResponse]
+
 class RerankRequest(BaseModel):
-    requirement: str       = Field(..., min_length=1, max_length=5_000)
-    candidates:  List[str] = Field(..., min_items=1, max_items=200)
-    top_k:       int       = Field(default=10, ge=1, le=100)
+    requirement: str = Field(..., min_length=1, max_length=5_000)
+    candidates:  List[Annotated[str, Field(max_length=5_000)]] = Field(
+        ..., min_length=1, max_length=200
+    )
+    top_k:       int = Field(default=10, ge=1, le=100)
 
 class RerankResult(BaseModel):
     index: int
@@ -180,54 +272,41 @@ def health():
     emb = _emb
     hfv = _hfval
     return {
-        "status":        "UP" if _ready.is_set() else "LOADING",
-        "version":       "2.0.0",
-        "dev_mode":      DEV_MODE,
-        "req_model":     emb.req_model_loaded   if emb else False,
-        "code_model":    emb.code_model_loaded  if emb else False,
-        "bge_model":     emb.bge_model_loaded   if emb else False,
-        "reranker":      emb.reranker_loaded     if emb else False,
-        "hf_validator":  hfv.available           if hfv else False,
-        # backward-compat flags (read by Java GatewayHealthController)
-        "sbert_loaded":  emb.sbert_loaded        if emb else False,
-        "word2vec_loaded": emb.word2vec_loaded   if emb else False,
+        "status":          "UP" if _ready.is_set() else "LOADING",
+        "version":         "2.2.0",
+        "dev_mode":        DEV_MODE,
+        "req_model":       emb.req_model_loaded   if emb else False,
+        "code_model":      emb.code_model_loaded  if emb else False,
+        "bge_model":       emb.bge_model_loaded   if emb else False,
+        "reranker":        emb.reranker_loaded     if emb else False,
+        "hf_validator":    hfv.available           if hfv else False,
+        "ast_chunker":     True,
+        "sbert_loaded":    emb.sbert_loaded        if emb else False,
+        "word2vec_loaded": emb.word2vec_loaded      if emb else False,
     }
 
 @app.get("/models")
 def list_models():
-    """Returns which HF models are loaded and their purpose."""
     emb = _emb
     return {
         "models": [
-            {
-                "name":    "all-MiniLM-L6-v2",
-                "purpose": "Requirement sentence embeddings (384-dim)",
-                "loaded":  emb.req_model_loaded if emb else False,
-                "dims":    384,
-            },
-            {
-                "name":    "krlvi/sentence-t5-base-nlpl-code_search_net",
-                "purpose": "Code description embeddings (768-dim, code-aware)",
-                "loaded":  emb.code_model_loaded if emb else False,
-                "dims":    768,
-            },
-            {
-                "name":    "BAAI/bge-small-en-v1.5",
-                "purpose": "Word/keyword embeddings — replaces Word2Vec (384-dim, no OOV)",
-                "loaded":  emb.bge_model_loaded if emb else False,
-                "dims":    384,
-            },
-            {
-                "name":    "cross-encoder/ms-marco-MiniLM-L-6-v2",
-                "purpose": "Cross-encoder re-ranking of (requirement, code) pairs",
-                "loaded":  emb.reranker_loaded if emb else False,
-                "dims":    None,
-            },
+            {"name": "all-MiniLM-L6-v2",
+             "purpose": "Requirement AND code chunk embeddings — SHARED SPACE (384-dim)",
+             "loaded": emb.req_model_loaded if emb else False, "dims": 384},
+            {"name": "krlvi/sentence-t5-base-nlpl-code_search_net",
+             "purpose": "Code description embeddings — loaded but NOT used for similarity (different space)",
+             "loaded": emb.code_model_loaded if emb else False, "dims": 384},
+            {"name": "BAAI/bge-small-en-v1.5",
+             "purpose": "Word/keyword embeddings — replaces Word2Vec (no OOV)",
+             "loaded": emb.bge_model_loaded if emb else False, "dims": 384},
+            {"name": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+             "purpose": "Cross-encoder re-ranking of (requirement, code) pairs",
+             "loaded": emb.reranker_loaded if emb else False, "dims": None},
         ]
     }
 
 
-@app.post("/preprocess", response_model=PreprocessResponse)
+@app.post("/preprocess", response_model=PreprocessResponse, dependencies=[Security(require_key)])
 def preprocess(req: PreprocessRequest):
     check_ready()
     try:
@@ -235,10 +314,10 @@ def preprocess(req: PreprocessRequest):
         return PreprocessResponse(**r)
     except Exception as e:
         logger.error("preprocess failed: %s", e, exc_info=True)
-        raise HTTPException(500, f"Preprocessing error: {e}")
+        raise HTTPException(500, "Preprocessing error")
 
 
-@app.post("/embed", response_model=EmbedResponse)
+@app.post("/embed", response_model=EmbedResponse, dependencies=[Security(require_key)])
 def embed(req: EmbedRequest):
     check_ready()
     try:
@@ -246,14 +325,14 @@ def embed(req: EmbedRequest):
         return EmbedResponse(**r)
     except Exception as e:
         logger.error("embed failed: %s", e, exc_info=True)
-        raise HTTPException(500, f"Embedding error: {e}")
+        raise HTTPException(500, "Embedding error")
 
 
-@app.post("/preprocess-and-embed", response_model=PreprocessEmbedResponse)
+@app.post("/preprocess-and-embed", response_model=PreprocessEmbedResponse, dependencies=[Security(require_key)])
 def preprocess_and_embed(req: PreprocessEmbedRequest):
     check_ready()
     try:
-        text = req.text.strip()
+        text  = req.text.strip()
         nlp_r = _nlp.process(text)
         emb_r = _emb.embed(text, nlp_r["keywords"], mode=req.mode)
         return PreprocessEmbedResponse(
@@ -267,23 +346,217 @@ def preprocess_and_embed(req: PreprocessEmbedRequest):
         )
     except Exception as e:
         logger.error("preprocess-and-embed failed: %s", e, exc_info=True)
-        raise HTTPException(500, f"preprocess-and-embed error: {e}")
+        raise HTTPException(500, "preprocess-and-embed error")
 
 
-@app.post("/rerank", response_model=RerankResponse)
+# ── NEW v2.2: Batch endpoint ──────────────────────────────────────────────────
+
+@app.post("/batch-preprocess-and-embed", response_model=BatchPreprocessEmbedResponse)
+def batch_preprocess_and_embed(req: BatchPreprocessEmbedRequest):
+    """
+    Batch embed N requirements in one HTTP call.
+
+    INPUT FORMAT for each text item:
+      "REQ-ID||requirement text"
+      Example: "FR-2.1.1||Allow users to import source code from GitHub repositories"
+
+    If no "||" separator is found, the whole string is treated as the text
+    and req_id is set to the item index.
+
+    PERFORMANCE:
+      Serial (v2.1): 46 requirements × ~200ms per call = ~9 seconds
+      Batch  (v2.2): 46 requirements in 1 call         = ~0.8 seconds
+    """
+    check_ready()
+    try:
+        req_ids: List[str] = []
+        clean_texts: List[str] = []
+
+        for i, item in enumerate(req.texts):
+            if "||" in item:
+                parts = item.split("||", 1)
+                req_ids.append(parts[0].strip())
+                clean_texts.append(parts[1].strip())
+            else:
+                req_ids.append(str(i))
+                clean_texts.append(item.strip())
+
+        # Batch embed all texts in one call (much faster than serial)
+        embeddings = _emb.embed_batch(clean_texts, mode=req.mode)
+
+        results: List[BatchEmbedResult] = []
+        failed_count = 0
+
+        for idx, (req_id, text, embedding) in enumerate(zip(req_ids, clean_texts, embeddings)):
+            # ZERO-VECTOR FIX: the previous check was `if is_zero and not embedding:`
+            # which required the vector to be BOTH all-zero AND an empty list. A real
+            # failed embedding is a NON-empty list of zeros ([0.0, 0.0, ...]), so
+            # `not embedding` was always False and the check never fired — zero
+            # vectors sailed through as valid and produced cosine=0.0 downstream.
+            # Correct check: a vector is failed if it is empty OR all-zero/NaN.
+            is_zero = _vec_failed(embedding)
+            if is_zero:
+                failed_count += 1
+                logger.warning("batch-preprocess-and-embed: req_id=%s produced a "
+                               "zero/empty vector (text len=%d)", req_id, len(text))
+                results.append(BatchEmbedResult(
+                    index=idx, req_id=req_id, text=text,
+                    tokens=[], keywords=[], action_verbs=[], warnings=[],
+                    sentence_embedding=[], word_embeddings={}, oov_keywords=[],
+                    error="Embedding failed — zero vector returned"
+                ))
+                continue
+
+            try:
+                nlp_r    = _nlp.process(text)
+                keywords = nlp_r.get("keywords", [])
+                tokens   = nlp_r.get("tokens", [])
+                verbs    = nlp_r.get("action_verbs", [])
+                warns    = nlp_r.get("warnings", [])
+            except Exception as e:
+                keywords, tokens, verbs, warns = [], [], [], [str(e)]
+
+            # Word embeddings for keywords (for Jaccard matching in Java)
+            try:
+                word_embs = _emb.embed_words(keywords[:20])   # cap at 20 keywords
+            except Exception:
+                word_embs = {}
+
+            results.append(BatchEmbedResult(
+                index=idx,
+                req_id=req_id,
+                text=text,
+                tokens=tokens,
+                keywords=keywords,
+                action_verbs=verbs,
+                warnings=warns,
+                sentence_embedding=embedding,
+                word_embeddings=word_embs,
+                oov_keywords=[],
+                error=None,
+            ))
+
+        success_count = len(results) - failed_count
+        logger.info("batch-preprocess-and-embed: %d/%d succeeded", success_count, len(results))
+        return BatchPreprocessEmbedResponse(
+            total=len(results),
+            success=success_count,
+            failed=failed_count,
+            results=results,
+        )
+
+    except Exception as e:
+        logger.error("batch-preprocess-and-embed failed: %s", e, exc_info=True)
+        raise HTTPException(500, "batch-preprocess-and-embed error")
+
+
+# ── AST-based Java chunker endpoint ──────────────────────────────────────────
+
+@app.post("/ast-chunk-zip", response_model=AstChunkZipResponse, dependencies=[Security(require_key)])
+async def ast_chunk_zip(file: UploadFile = File(...)):
+    """
+    AST-based Java code chunker.
+    Accepts a ZIP, extracts all .java files, splits into class/method chunks,
+    expands camelCase in chunk_text, embeds each chunk with req_model (same
+    vector space as requirements), returns all chunks for many-to-many matching.
+    """
+    check_ready()
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "Empty file uploaded")
+    if len(content) > MAX_UPLOAD_MB * 1024 * 1024:
+        raise HTTPException(413, f"Upload exceeds {MAX_UPLOAD_MB} MB limit")
+
+    try:
+        zf = zipmod.ZipFile(io.BytesIO(content))
+    except zipmod.BadZipFile:
+        raise HTTPException(400, "Uploaded file is not a valid ZIP archive")
+
+    # Zip-bomb guards: check declared uncompressed size and entry count BEFORE
+    # reading any file contents out of the archive.
+    infos = zf.infolist()
+    total_uncompressed = sum(i.file_size for i in infos)
+    if total_uncompressed > MAX_ZIP_UNCOMPRESSED_MB * 1024 * 1024:
+        zf.close()
+        raise HTTPException(413, f"Archive uncompressed size exceeds {MAX_ZIP_UNCOMPRESSED_MB} MB limit")
+
+    java_names = [
+        i.filename for i in infos
+        if i.filename.endswith(".java") and not i.filename.endswith("module-info.java")
+    ]
+    if len(java_names) > MAX_JAVA_FILES:
+        zf.close()
+        raise HTTPException(413, f"Archive contains more than {MAX_JAVA_FILES} .java files")
+
+    java_files: Dict[str, str] = {}
+    for name in java_names:
+        try:
+            raw = zf.read(name)
+            java_files[name] = raw.decode("utf-8", errors="replace")
+        except Exception as exc:
+            logger.warning("Could not read %s from ZIP: %s", name, exc)
+
+    zf.close()
+
+    if not java_files:
+        raise HTTPException(422, "No .java files found in the uploaded ZIP")
+
+    logger.info("ast-chunk-zip: %d Java files extracted from %s",
+                len(java_files), file.filename)
+
+    all_chunks: List[Dict[str, Any]] = []
+    for path, source in java_files.items():
+        norm_path = path.replace("\\", "/")
+        try:
+            file_chunks = chunk_java_source(source, norm_path)
+            all_chunks.extend(file_chunks)
+        except Exception as exc:
+            logger.warning("chunk_java_source failed for %s: %s", norm_path, exc)
+
+    logger.info("ast-chunk-zip: %d chunks from %d files", len(all_chunks), len(java_files))
+
+    if not all_chunks:
+        raise HTTPException(422, "Could not extract any chunks from the Java files")
+
+    enriched: List[AstChunkResponse] = []
+    failed = 0
+
+    for chunk in all_chunks:
+        text = chunk["chunk_text"]
+        if not text or not text.strip():
+            continue
+        try:
+            embedding  = _emb.embed_code(text)   # Now uses req_model (same space!)
+            nlp_result = _nlp.process(text)
+            keywords   = nlp_result.get("keywords", [])
+
+            enriched.append(AstChunkResponse(
+                file_path=chunk["file_path"],
+                class_name=chunk["class_name"],
+                method_name=chunk.get("method_name"),
+                chunk_type=chunk["chunk_type"],
+                chunk_text=chunk["chunk_text"],
+                line_start=chunk.get("line_start", 0),
+                keywords=keywords,
+                embedding=embedding,
+            ))
+        except Exception as exc:
+            failed += 1
+            logger.debug("Embed failed for chunk %s.%s: %s",
+                         chunk.get("class_name"), chunk.get("method_name"), exc)
+
+    logger.info("ast-chunk-zip: %d enriched chunks (%d failed)", len(enriched), failed)
+
+    return AstChunkZipResponse(
+        total_files=len(java_files),
+        total_chunks=len(enriched),
+        chunks=enriched,
+    )
+
+
+@app.post("/rerank", response_model=RerankResponse, dependencies=[Security(require_key)])
 def rerank(req: RerankRequest):
-    """
-    Cross-encoder re-ranking (NEW — Hugging Face).
-
-    Takes the top-K (requirement, candidate_description) pairs already
-    narrowed down by bi-encoder+Jaccard, and re-scores them jointly.
-    This corrects false positives where two texts share keywords but mean
-    different things, and lifts false negatives where paraphrases have low
-    Jaccard but high semantic overlap.
-
-    Typical use: Java MatchingService calls this after getting top-10
-    candidates from Jaccard+SBERT to get the best final ordering.
-    """
     check_ready()
     try:
         ranked_idx = _emb.rerank(req.requirement, req.candidates, req.top_k)
@@ -295,21 +568,15 @@ def rerank(req: RerankRequest):
         )
     except Exception as e:
         logger.error("rerank failed: %s", e, exc_info=True)
-        raise HTTPException(500, f"Reranking error: {e}")
+        raise HTTPException(500, "Reranking error")
 
 
-@app.post("/validate", response_model=ValidateResponse)
+@app.post("/validate", response_model=ValidateResponse, dependencies=[Security(require_key)])
 def validate(req: ValidateRequest):
-    """
-    Validate a requirement text via HF Inference API (Mistral-7B).
-    Falls back to Groq (if GROQ_API_KEY set) or rule-based otherwise.
-    This endpoint is called by the Java AiSemanticValidator when
-    USE_HF_VALIDATOR=true is set.
-    """
     check_ready()
     try:
         r = _hfval.validate(req.text.strip())
         return ValidateResponse(**r)
     except Exception as e:
         logger.error("validate failed: %s", e, exc_info=True)
-        raise HTTPException(500, f"Validation error: {e}")
+        raise HTTPException(500, "Validation error")

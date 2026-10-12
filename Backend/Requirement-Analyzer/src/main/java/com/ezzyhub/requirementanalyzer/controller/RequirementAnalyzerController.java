@@ -5,6 +5,7 @@ import com.ezzyhub.requirementanalyzer.dto.AnalysisResult;
 import com.ezzyhub.requirementanalyzer.dto.BatchAnalysisRequest;
 import com.ezzyhub.requirementanalyzer.dto.RequirementSummaryDto;
 import com.ezzyhub.requirementanalyzer.model.Requirement;
+import com.ezzyhub.requirementanalyzer.security.JwtVerifier;
 import com.ezzyhub.requirementanalyzer.service.RequirementAnalyzerService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -39,6 +40,7 @@ import java.util.Map;
 public class RequirementAnalyzerController {
 
     private final RequirementAnalyzerService analyzerService;
+    private final JwtVerifier jwtVerifier;
 
     // ─── POST /analyze — Full pipeline ──────────────────────────────────────
 
@@ -51,7 +53,10 @@ public class RequirementAnalyzerController {
                     """
     )
     public ResponseEntity<AnalysisResult> analyze(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
             @Valid @RequestBody AnalysisRequest request) {
+
+        jwtVerifier.extractUserId(authorization);
 
         log.info("POST /analyze - input: '{}'", request.getRequirementText());
         RequirementAnalyzerService.SaveResult saveResult = analyzerService.analyzeAndSave(request);
@@ -133,7 +138,11 @@ public class RequirementAnalyzerController {
 
     @DeleteMapping("/{id}")
     @Operation(summary = "Delete a requirement by database ID")
-    public ResponseEntity<Map<String, String>> deleteById(@PathVariable Long id) {
+    public ResponseEntity<Map<String, String>> deleteById(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable Long id) {
+
+        jwtVerifier.extractUserId(authorization);
         analyzerService.deleteById(id);
         return ResponseEntity.ok(Map.of("message", "Requirement deleted", "id", id.toString()));
     }

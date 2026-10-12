@@ -1,0 +1,1 @@
+The system shall load and parse an existing PDF file from disk into an in-memory document object that exposes its pages and metadata.

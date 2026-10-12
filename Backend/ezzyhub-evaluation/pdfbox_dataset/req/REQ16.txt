@@ -1,0 +1,1 @@
+The system shall export/convert a PDF into an editable Microsoft Word (.docx) document.

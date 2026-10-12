@@ -1,0 +1,33 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3000,
+      "cwd": "frontend"
+    },
+    {
+      "name": "code-analyzer",
+      "runtimeExecutable": "mvn",
+      "runtimeArgs": ["spring-boot:run", "-Dspring-boot.run.arguments=--server.port=8180"],
+      "port": 8180,
+      "cwd": "Backend/Code-Analyzer/backend"
+    },
+    {
+      "name": "auth-service",
+      "runtimeExecutable": "mvn",
+      "runtimeArgs": ["spring-boot:run"],
+      "port": 8087,
+      "cwd": "Backend/auth-service"
+    },
+    {
+      "name": "report-service",
+      "runtimeExecutable": "mvn",
+      "runtimeArgs": ["spring-boot:run"],
+      "port": 8086,
+      "cwd": "Backend/report-service"
+    }
+  ]
+}

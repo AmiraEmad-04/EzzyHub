@@ -1,0 +1,1 @@
+The system shall extract the plain-text content of a PDF in natural reading order.

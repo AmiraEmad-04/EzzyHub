@@ -31,7 +31,11 @@ public class CorsConfig {
         }
 
         config.addAllowedHeader("*");
-        config.addAllowedMethod("*");
+        // Only the HTTP methods actually exposed by this API are allowed cross-origin
+        // (no endpoint uses PUT/DELETE/PATCH, so there is no legitimate use for allowing them).
+        config.addAllowedMethod("GET");
+        config.addAllowedMethod("POST");
+        config.addAllowedMethod("OPTIONS");
         config.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
